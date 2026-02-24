@@ -46,6 +46,8 @@ export default function CandlestickChart() {
   const oldestCandleTimeRef = useRef<number | null>(null)
 
   useEffect(() => {
+    // Verificar que estamos en el navegador (no en SSR)
+    if (typeof window === 'undefined') return
     if (!chartContainerRef.current) return
 
     const chart = createChart(chartContainerRef.current, {
