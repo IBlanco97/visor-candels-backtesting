@@ -389,6 +389,24 @@ export default function CandlestickChart() {
     setProfitLoss(0)
   }
 
+  const undoLastTrade = () => {
+    // No hacer nada si no hay operaciones
+    if (tradePositions.length === 0) return
+
+    // Si hay un trade activo (sin salida), cancelarlo primero
+    if (activeTradeId) {
+      resetActiveTrade()
+      return
+    }
+
+    // Eliminar la última operación completada
+    const newPositions = tradePositions.slice(0, -1)
+    setTradePositions(newPositions)
+
+    // Actualizar marcadores del gráfico
+    updateMarkers(newPositions)
+  }
+
   const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
   const pnlBgColor = profitLoss >= 0 ? 'bg-green-500' : 'bg-red-500'
 
@@ -407,6 +425,20 @@ export default function CandlestickChart() {
                className="px-4 py-1 text-sm bg-yellow-600 hover:bg-yellow-700 rounded transition-colors"
              >
                Cancelar Trade Actual
+             </button>
+           )}
+           {tradePositions.length > 0 && (
+             <button
+               onClick={undoLastTrade}
+               disabled={activeTradeId !== null}
+               className={`px-4 py-1 text-sm rounded transition-colors ${
+                 activeTradeId !== null
+                   ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                   : 'bg-blue-600 hover:bg-blue-700'
+               }`}
+               title={activeTradeId !== null ? 'Cancela el trade activo primero' : 'Deshacer última operación'}
+             >
+               ↩️ Deshacer
              </button>
            )}
            {tradePositions.length > 0 && (
@@ -514,6 +546,7 @@ export default function CandlestickChart() {
               <li>• Puedes tener múltiples operaciones</li>
               <li>• Mueve el puntero para ver % actual</li>
               <li>• Cancelar Trade Actual = Solo el activo</li>
+              <li>• Deshacer = Elimina última operación</li>
               <li>• Resetear Todos = Borrar todo</li>
             </ul>
           </div>

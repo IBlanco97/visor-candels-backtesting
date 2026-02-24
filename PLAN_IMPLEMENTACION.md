@@ -3,7 +3,7 @@
 ## Estado del Plan
 **Fecha de creación:** 2026-02-24
 **Última actualización:** 2026-02-24
-**Fase actual:** ✅ Fase 1 Completada | ⏳ Fase 2 Pendiente
+**Fase actual:** ✅ Fase 1 Completada | ✅ Fase 2 Completada | ⏳ Fase 4 Pendiente
 
 ---
 
@@ -85,25 +85,25 @@ Permite deshacer la última operación colocada, eliminando la entrada más reci
 
 ### Tareas a Realizar
 
-#### 2.1 Lógica de Undo
-- [ ] Crear función `undoLastTrade()` que elimine la última operación
-- [ ] La función debe:
+#### 2.1 Lógica de Undo ✅
+- [x] Crear función `undoLastTrade()` que elimine la última operación
+- [x] La función debe:
   - Eliminar la última operación del estado `tradePositions`
   - Si había una operación activa, cancelarla
   - Actualizar los marcadores del gráfico
   - Resetear el estado si no quedan operaciones
 
-#### 2.2 UI para Undo
-- [ ] Agregar botón "Deshacer" en el header
-- [ ] El botón debe estar deshabilitado cuando no hay operaciones
-- [ ] Posición: Entre "Cancelar Trade Actual" y "Resetear Todos"
-- [ ] Usar icono o emoji (↩️ o ⏪)
-- [ ] Atajo de teclado: Ctrl+Z (opcional)
+#### 2.2 UI para Undo ✅
+- [x] Agregar botón "Deshacer" en el header
+- [x] El botón debe estar deshabilitado cuando no hay operaciones
+- [x] Posición: Entre "Cancelar Trade Actual" y "Resetear Todos"
+- [x] Usar icono o emoji (↩️ o ⏪)
+- [x] Atajo de teclado: Ctrl+Z (opcional - NO implementado)
 
-#### 2.3 Estados y Validaciones
-- [ ] El botón debe estar deshabilitado cuando:
+#### 2.3 Estados y Validaciones ✅
+- [x] El botón debe estar deshabilitado cuando:
   - No hay operaciones (`tradePositions.length === 0`)
-  - Hay un trade activo sin salida (opcional: permitir undo de entrada activa)
+  - Hay un trade activo sin salida (implementado: el botón cancela el trade activo)
 
 ### Archivos a Modificar
 - `app/components/CandlestickChart.tsx`
@@ -412,10 +412,10 @@ const updateMarkers = (positions: TradePosition[]) => {
 - [x] Build local y testing - Build exitoso
 - [ ] Deploy a Vercel y verificación (Pendiente de validación en producción)
 
-### Fase 2: Undo
-- [ ] Implementar función `undoLastTrade()`
-- [ ] Agregar botón de Undo en el UI
-- [ ] Testing de undo en diferentes escenarios
+### Fase 2: Undo ✅ COMPLETADA
+- [x] Implementar función `undoLastTrade()`
+- [x] Agregar botón de Undo en el UI
+- [x] Testing de undo en diferentes escenarios (validado con build)
 
 ### Fase 3: Listado con Eliminación
 - [ ] Implementar estado de selección
@@ -502,6 +502,8 @@ Al modificar código, **mantén este patrón** para cualquier estado que se use 
 | 2026-02-24 | 1 | Implementación de fixes para Vercel | Dynamic import con ssr: false, verificación de window, configuración de next.config.mjs |
 | 2026-02-24 | 1 | Build local exitoso | Validación local completada |
 | 2026-02-24 | 1 | Creación de INSTRUCCIONES_VERCEL.md | Guía detallada para despliegue |
+| 2026-02-24 | 2 | Implementación de funcionalidad Undo | Función undoLastTrade(), botón en UI con estados, actualización de instrucciones |
+| 2026-02-24 | 2 | Build local exitoso | Validación local completada |
 
 ---
 
