@@ -5,9 +5,11 @@ import { createChart, CandlestickSeries, ColorType, Time, CandlestickData, creat
 import { fetchBitcoinCandlesticks } from '../services/binance'
 
 type TradeStage = 'idle' | 'entry_placed' | 'exit_placed'
+type TradeDirection = 'long' | 'short'
 
 interface TradePosition {
   id: string
+  direction: TradeDirection
   entryPrice: number
   entryTime: Time
   exitPrice?: number
@@ -32,6 +34,8 @@ export default function CandlestickChart() {
   const [tradeStage, setTradeStage] = useState<TradeStage>('idle')
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null)
   const [tradePositions, setTradePositions] = useState<TradePosition[]>([])
+  const [nextTradeDirection, setNextTradeDirection] = useState<TradeDirection>('long')
+  const nextTradeDirectionRef = useRef<TradeDirection>('long')
   const tradePositionsRef = useRef<TradePosition[]>([])
   const activeTradeIdRef = useRef<string | null>(null)
   const tradeStageRef = useRef<TradeStage>('idle')
@@ -240,7 +244,12 @@ export default function CandlestickChart() {
             const activeTrade = tradePositionsRef.current.find(t => t.id === activeTradeIdRef.current)
             if (activeTrade) {
               const pointerPrice = seriesData.close as number
-              const percentage = ((pointerPrice - activeTrade.entryPrice) / activeTrade.entryPrice) * 100
+              // Usar cálculo direccional para el puntero
+              const percentage = calculateProfitLoss(
+                activeTrade.entryPrice,
+                pointerPrice,
+                activeTrade.direction
+              )
               setProfitLoss(percentage)
             }
           }
@@ -290,6 +299,7 @@ export default function CandlestickChart() {
         const newId = Date.now().toString()
         const newPosition: TradePosition = {
           id: newId,
+          direction: nextTradeDirectionRef.current,
           entryPrice: clickedPrice,
           entryTime: clickedTime,
         }
@@ -312,7 +322,12 @@ export default function CandlestickChart() {
         })
         const activeTrade = tradePositions.find(t => t.id === activeTradeId)
         if (activeTrade) {
-          const percentage = ((clickedPrice - activeTrade.entryPrice) / activeTrade.entryPrice) * 100
+          // Usar cálculo direccional para la salida
+          const percentage = calculateProfitLoss(
+            activeTrade.entryPrice,
+            clickedPrice,
+            activeTrade.direction
+          )
           setProfitLoss(percentage)
 
           const exitColor = percentage >= 0 ? '#22ab94' : '#f7525f'
@@ -342,6 +357,10 @@ export default function CandlestickChart() {
   }, [tradePositions])
 
   useEffect(() => {
+    nextTradeDirectionRef.current = nextTradeDirection
+  }, [nextTradeDirection])
+
+  useEffect(() => {
     activeTradeIdRef.current = activeTradeId
   }, [activeTradeId])
 
@@ -352,17 +371,30 @@ export default function CandlestickChart() {
   const updateMarkers = (positions: TradePosition[]) => {
     const markers: TradeMarker[] = []
     positions.forEach(trade => {
+      // Configuración según dirección
+      const entryColor = trade.direction === 'long' ? '#22ab94' : '#f7525f'
+      const entryShape = trade.direction === 'long' ? 'arrowUp' : 'arrowDown'
+      const entryText = trade.direction === 'long' ? '📈 ENTRADA LONG' : '📉 ENTRADA SHORT'
+      const entryPosition = trade.direction === 'long' ? 'belowBar' : 'aboveBar'
+
       markers.push({
         time: trade.entryTime,
-        position: 'belowBar',
-        color: '#22ab94',
-        shape: 'arrowUp',
-        text: 'ENTRADA',
+        position: entryPosition,
+        color: entryColor,
+        shape: entryShape,
+        text: entryText,
       })
+
       if (trade.exitPrice && trade.exitTime) {
-        const percentage = ((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100
+        // Usar la función de cálculo direccional
+        const percentage = calculateProfitLoss(
+          trade.entryPrice,
+          trade.exitPrice,
+          trade.direction
+        )
         const exitColor = percentage >= 0 ? '#22ab94' : '#f7525f'
         const exitShape = percentage >= 0 ? 'arrowUp' : 'arrowDown'
+
         markers.push({
           time: trade.exitTime,
           position: 'aboveBar',
@@ -373,6 +405,20 @@ export default function CandlestickChart() {
       }
     })
     markersPluginRef.current?.setMarkers(markers)
+  }
+
+  // Función de cálculo de P&L con direccionalidad
+  const calculateProfitLoss = (
+    entryPrice: number,
+    exitPrice: number,
+    direction: TradeDirection
+  ): number => {
+    if (direction === 'long') {
+      return ((exitPrice - entryPrice) / entryPrice) * 100
+    } else {
+      // Para short: ganamos cuando el precio baja
+      return ((entryPrice - exitPrice) / entryPrice) * 100
+    }
   }
 
   const resetTrade = () => {
@@ -413,7 +459,31 @@ export default function CandlestickChart() {
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-white">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
-        <h1 className="text-xl font-bold">Bitcoin Trader - 15m</h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-bold">Bitcoin Trader - 15m</h1>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setNextTradeDirection('long')}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                nextTradeDirection === 'long'
+                  ? 'bg-green-600 text-white font-semibold'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              📈 LONG
+            </button>
+            <button
+              onClick={() => setNextTradeDirection('short')}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                nextTradeDirection === 'short'
+                  ? 'bg-red-600 text-white font-semibold'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              📉 SHORT
+            </button>
+          </div>
+        </div>
           <div className="flex items-center gap-4">
            <div className="text-sm">
              <span className="text-gray-400">BTC Price:</span>
@@ -481,10 +551,13 @@ export default function CandlestickChart() {
               {(() => {
                 const activeTrade = tradePositions.find(t => t.id === activeTradeId)
                 if (!activeTrade) return null
+                const isLong = activeTrade.direction === 'long'
+                const directionColor = isLong ? 'border-green-500 bg-green-900' : 'border-red-500 bg-red-900'
+                const directionText = isLong ? '📈 LONG' : '📉 SHORT'
                 return (
                   <>
-                    <div className="bg-yellow-900 border-2 border-yellow-500 rounded-lg p-4">
-                      <h3 className="text-xs font-semibold text-yellow-400 mb-2">📍 Trade Activo</h3>
+                    <div className={`${directionColor} border-2 rounded-lg p-4`}>
+                      <h3 className="text-xs font-semibold text-yellow-400 mb-2">📍 Trade Activo - {directionText}</h3>
                       <div className="text-lg font-mono">
                         ${activeTrade.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </div>
@@ -510,17 +583,21 @@ export default function CandlestickChart() {
               <div className="max-h-64 overflow-y-auto space-y-2">
                 {tradePositions.map((trade, index) => {
                   const isCompleted = trade.exitPrice !== undefined
+                  const isLong = trade.direction === 'long'
+                  // Usar cálculo direccional para el porcentaje
                   const percentage = isCompleted
-                    ? ((trade.exitPrice! - trade.entryPrice) / trade.entryPrice) * 100
+                    ? calculateProfitLoss(trade.entryPrice, trade.exitPrice!, trade.direction)
                     : 0
                   const color = percentage >= 0 ? 'text-green-500' : 'text-red-500'
+                  const directionBadge = isLong ? '📈' : '📉'
+                  const directionBorder = isLong ? 'border-l-green-500' : 'border-l-red-500'
                   return (
                     <div
                       key={trade.id}
-                      className={`text-xs p-2 rounded ${isCompleted ? 'bg-gray-600' : 'bg-blue-900 border border-blue-500'}`}
+                      className={`text-xs p-2 rounded border-l-4 ${directionBorder} ${isCompleted ? 'bg-gray-600' : 'bg-blue-900 border border-blue-500'}`}
                     >
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-400">#${index + 1}</span>
+                        <span className="text-gray-400">#${index + 1} {directionBadge} {isLong ? 'LONG' : 'SHORT'}</span>
                         <span className={color}>{isCompleted ? (percentage >= 0 ? '+' : '') + percentage.toFixed(2) + '%' : 'En curso...'}</span>
                       </div>
                       <div className="font-mono text-gray-300">
@@ -541,8 +618,10 @@ export default function CandlestickChart() {
           <div className="bg-gray-700 rounded-lg p-4 mt-auto">
             <h3 className="text-xs font-semibold text-gray-400 mb-2">Instrucciones</h3>
             <ul className="text-xs space-y-1 text-gray-300">
+              <li>• Selecciona LONG o SHORT antes de entrar</li>
               <li>• Click en gráfico = Marcar entrada</li>
               <li>• Click de nuevo = Marcar salida</li>
+              <li>• P&L se calcula según dirección</li>
               <li>• Puedes tener múltiples operaciones</li>
               <li>• Mueve el puntero para ver % actual</li>
               <li>• Cancelar Trade Actual = Solo el activo</li>

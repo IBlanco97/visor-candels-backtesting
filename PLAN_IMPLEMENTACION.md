@@ -3,7 +3,7 @@
 ## Estado del Plan
 **Fecha de creación:** 2026-02-24
 **Última actualización:** 2026-02-24
-**Fase actual:** ✅ Fase 1 Completada | ✅ Fase 2 Completada | ⏳ Fase 4 Pendiente
+**Fase actual:** ✅ Fase 1 Completada | ✅ Fase 2 Completada | ✅ Fase 4 Completada | ⏳ Fase 3 Pendiente
 
 ---
 
@@ -225,40 +225,41 @@ Permite seleccionar si la próxima operación será Long o Short, y calcula el p
 
 ### Tareas a Realizar
 
-#### 4.1 Tipo de Operación en TradePosition
-- [ ] Agregar campo `direction: 'long' | 'short'` a la interfaz `TradePosition`
-- [ ] Estado para `nextTradeDirection: 'long' | 'short'`
-- [ ] Por defecto: `'long'`
+#### 4.1 Tipo de Operación en TradePosition ✅
+- [x] Agregar campo `direction: 'long' | 'short'` a la interfaz `TradePosition`
+- [x] Estado para `nextTradeDirection: 'long' | 'short'`
+- [x] Por defecto: `'long'`
 
-#### 4.2 UI Selector de Dirección
-- [ ] Botones toggle en el header: [LONG] [SHORT]
-- [ ] Colores distintivos:
+#### 4.2 UI Selector de Dirección ✅
+- [x] Botones toggle en el header: [LONG] [SHORT]
+- [x] Colores distintivos:
   - Long: Verde (#22ab94)
   - Short: Rojo o Naranja (#f7525f)
-- [ ] Indicador visual de la dirección seleccionada
-- [ ] Posición: Cerca del título o en el panel lateral
+- [x] Indicador visual de la dirección seleccionada
+- [x] Posición: Cerca del título en el header
 
-#### 4.3 Marcadores Visuales en Gráfico
-- [ ] Long: Flecha hacia arriba (arrowUp) verde
-- [ ] Short: Flecha hacia abajo (arrowDown) roja
-- [ ] Texto en marcador: "ENTRADA LONG" / "ENTRADA SHORT"
-- [ ] Posición: Long=belowBar, Short=aboveBar (o viceversa)
+#### 4.3 Marcadores Visuales en Gráfico ✅
+- [x] Long: Flecha hacia arriba (arrowUp) verde
+- [x] Short: Flecha hacia abajo (arrowDown) roja
+- [x] Texto en marcador: "📈 ENTRADA LONG" / "📉 ENTRADA SHORT"
+- [x] Posición: Long=belowBar, Short=aboveBar
 
-#### 4.4 Cálculo de P&L con Dirección
-- [ ] Modificar función de cálculo de porcentaje para considerar dirección
-- [ ] En el crosshair (puntero):
+#### 4.4 Cálculo de P&L con Dirección ✅
+- [x] Modificar función de cálculo de porcentaje para considerar dirección
+- [x] En el crosshair (puntero):
   - Long: `((puntero - entrada) / entrada) * 100`
   - Short: `((entrada - puntero) / entrada) * 100`
-- [ ] En marcadores de salida:
+- [x] En marcadores de salida:
   - Usar la misma fórmula direccional
-- [ ] Colores de P&L:
+- [x] Colores de P&L:
   - Positivo: Verde
   - Negativo: Rojo
 
-#### 4.5 Actualización del Listado
-- [ ] Mostrar dirección en cada operación del listado
-- [ ] Icono o badge: 📈 LONG / 📉 SHORT
-- [ ] Colores coherentes con el selector
+#### 4.5 Actualización del Listado ✅
+- [x] Mostrar dirección en cada operación del listado
+- [x] Icono o badge: 📈 LONG / 📉 SHORT
+- [x] Colores coherentes con el selector
+- [x] Borde izquierdo de color según dirección
 
 ### Archivos a Modificar
 - `app/components/CandlestickChart.tsx`
@@ -424,14 +425,14 @@ const updateMarkers = (positions: TradePosition[]) => {
 - [ ] Actualizar marcadores al eliminar
 - [ ] Testing de eliminación simple y múltiple
 
-### Fase 4: Long/Short
-- [ ] Actualizar interfaz `TradePosition` con `direction`
-- [ ] Agregar estado `nextTradeDirection`
-- [ ] Implementar selector UI
-- [ ] Actualizar cálculo de P&L con dirección
-- [ ] Actualizar marcadores visuales
-- [ ] Actualizar listado con información de dirección
-- [ ] Testing exhaustivo de cálculos para long y short
+### Fase 4: Long/Short ✅ COMPLETADA
+- [x] Actualizar interfaz `TradePosition` con `direction`
+- [x] Agregar estado `nextTradeDirection`
+- [x] Implementar selector UI
+- [x] Actualizar cálculo de P&L con dirección
+- [x] Actualizar marcadores visuales
+- [x] Actualizar listado con información de dirección
+- [x] Testing exhaustivo de cálculos para long y short (validado con build)
 
 ### Fase 5: Testing Final
 - [ ] Testing local completo
@@ -504,6 +505,8 @@ Al modificar código, **mantén este patrón** para cualquier estado que se use 
 | 2026-02-24 | 1 | Creación de INSTRUCCIONES_VERCEL.md | Guía detallada para despliegue |
 | 2026-02-24 | 2 | Implementación de funcionalidad Undo | Función undoLastTrade(), botón en UI con estados, actualización de instrucciones |
 | 2026-02-24 | 2 | Build local exitoso | Validación local completada |
+| 2026-02-24 | 4 | Implementación de Long/Short con cálculo direccional | Interfaz TradePosition con dirección, selector UI, calculateProfitLoss(), marcadores visuales, listado actualizado |
+| 2026-02-24 | 4 | Build local exitoso | Validación local completada |
 
 ---
 
