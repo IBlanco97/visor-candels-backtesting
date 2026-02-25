@@ -3,7 +3,7 @@
 ## Estado del Plan
 **Fecha de creación:** 2026-02-24
 **Última actualización:** 2026-02-24
-**Fase actual:** ✅ Fase 1 Completada | ✅ Fase 2 Completada | ✅ Fase 4 Completada | ⏳ Fase 3 Pendiente
+**Fase actual:** ✅ Fase 1 Completada | ✅ Fase 2 Completada | ✅ Fase 3 Completada | ✅ Fase 4 Completada | ⏳ Fase 5 Pendiente
 
 ---
 
@@ -137,31 +137,32 @@ Lista interactiva de todas las operaciones donde el usuario puede seleccionar y 
 
 ### Tareas a Realizar
 
-#### 3.1 UI del Listado Mejorado
-- [ ] Cada item de la lista debe tener:
+#### 3.1 UI del Listado Mejorado ✅
+- [x] Cada item de la lista debe tener:
   - Checkbox para selección
   - Botón de eliminar individual
-  - Highlight visual al seleccionar
-  - Indicador visual de long/short (cuando se implemente Fase 4)
+  - Highlight visual al seleccionar (ring azul)
+  - Indicador visual de long/short (ya implementado en Fase 4)
 
-#### 3.2 Selección Múltiple
-- [ ] Estado para operaciones seleccionadas: `selectedTradeIds: Set<string>`
-- [ ] Checkbox en cada item para selección
-- [ ] "Seleccionar todos" / "Deseleccionar todos"
-- [ ] Botón "Eliminar seleccionados"
+#### 3.2 Selección Múltiple ✅
+- [x] Estado para operaciones seleccionadas: `selectedTradeIds: Set<string>`
+- [x] Checkbox en cada item para selección
+- [x] "Seleccionar todos" / "Deseleccionar todos"
+- [x] Botón "Eliminar seleccionados" con contador dinámico
 
-#### 3.3 Eliminación con Actualización de Gráfico
-- [ ] Función `deleteTrade(id: string)` para eliminar una operación
-- [ ] Función `deleteSelectedTrades()` para eliminar múltiples
-- [ ] Al eliminar:
+#### 3.3 Eliminación con Actualización de Gráfico ✅
+- [x] Función `deleteTrade(id: string)` para eliminar una operación
+- [x] Función `deleteSelectedTrades()` para eliminar múltiples
+- [x] Al eliminar:
   - Remover del estado `tradePositions`
   - Regenerar marcadores del gráfico sin la operación eliminada
   - Si se elimina el trade activo, resetear estado activo
 
-#### 3.4 Confirmación y Feedback
-- [ ] Modal o confirmación antes de eliminar (opcional)
-- [ ] Toast notification al eliminar
-- [ ] Animación suave al eliminar de la lista
+#### 3.4 Confirmación y Feedback ⚠️ PARCIAL
+- [x] Highlight visual al seleccionar (sin modal/confirmación)
+- [ ] Modal o confirmación antes de eliminar (NO implementado - decisión de diseño)
+- [ ] Toast notification al eliminar (NO implementado)
+- [ ] Animación suave al eliminar de la lista (transiciones CSS de Tailwind)
 
 ### Archivos a Modificar
 - `app/components/CandlestickChart.tsx`
@@ -419,11 +420,18 @@ const updateMarkers = (positions: TradePosition[]) => {
 - [x] Testing de undo en diferentes escenarios (validado con build)
 
 ### Fase 3: Listado con Eliminación
-- [ ] Implementar estado de selección
-- [ ] Agregar checkboxes a cada item
-- [ ] Implementar funciones de eliminación
-- [ ] Actualizar marcadores al eliminar
-- [ ] Testing de eliminación simple y múltiple
+- [x] Implementar estado de selección
+- [x] Agregar checkboxes a cada item
+- [x] Implementar funciones de eliminación
+- [x] Actualizar marcadores al eliminar
+- [x] Testing de eliminación simple y múltiple (validado con build)
+
+### Fase 3: Listado con Eliminación ✅ COMPLETADA
+- [x] Implementar estado de selección
+- [x] Agregar checkboxes a cada item
+- [x] Implementar funciones de eliminación
+- [x] Actualizar marcadores al eliminar
+- [x] Testing de eliminación simple y múltiple (validado con build)
 
 ### Fase 4: Long/Short ✅ COMPLETADA
 - [x] Actualizar interfaz `TradePosition` con `direction`
@@ -507,6 +515,8 @@ Al modificar código, **mantén este patrón** para cualquier estado que se use 
 | 2026-02-24 | 2 | Build local exitoso | Validación local completada |
 | 2026-02-24 | 4 | Implementación de Long/Short con cálculo direccional | Interfaz TradePosition con dirección, selector UI, calculateProfitLoss(), marcadores visuales, listado actualizado |
 | 2026-02-24 | 4 | Build local exitoso | Validación local completada |
+| 2026-02-24 | 3 | Implementación de listado con eliminación | Estado selectedTradeIds, checkboxes, funciones deleteTrade/deleteSelectedTrades, selectAll/deselectAll |
+| 2026-02-24 | 3 | Build local exitoso | Validación local completada |
 
 ---
 

@@ -34,6 +34,7 @@ export default function CandlestickChart() {
   const [tradeStage, setTradeStage] = useState<TradeStage>('idle')
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null)
   const [tradePositions, setTradePositions] = useState<TradePosition[]>([])
+  const [selectedTradeIds, setSelectedTradeIds] = useState<Set<string>>(new Set())
   const [nextTradeDirection, setNextTradeDirection] = useState<TradeDirection>('long')
   const nextTradeDirectionRef = useRef<TradeDirection>('long')
   const tradePositionsRef = useRef<TradePosition[]>([])
@@ -453,6 +454,57 @@ export default function CandlestickChart() {
     updateMarkers(newPositions)
   }
 
+  const deleteTrade = (id: string) => {
+    const newPositions = tradePositions.filter(t => t.id !== id)
+
+    // Si eliminamos el trade activo, resetear
+    if (activeTradeId === id) {
+      resetActiveTrade()
+    }
+
+    setTradePositions(newPositions)
+    updateMarkers(newPositions)
+
+    // Remover de selección si estaba seleccionado
+    const newSelected = new Set(selectedTradeIds)
+    newSelected.delete(id)
+    setSelectedTradeIds(newSelected)
+  }
+
+  const toggleTradeSelection = (id: string) => {
+    const newSelected = new Set(selectedTradeIds)
+    if (newSelected.has(id)) {
+      newSelected.delete(id)
+    } else {
+      newSelected.add(id)
+    }
+    setSelectedTradeIds(newSelected)
+  }
+
+  const deleteSelectedTrades = () => {
+    if (selectedTradeIds.size === 0) return
+
+    const newPositions = tradePositions.filter(t => !selectedTradeIds.has(t.id))
+
+    // Si el trade activo está entre los seleccionados, resetear
+    if (activeTradeId && selectedTradeIds.has(activeTradeId)) {
+      resetActiveTrade()
+    }
+
+    setTradePositions(newPositions)
+    updateMarkers(newPositions)
+    setSelectedTradeIds(new Set())
+  }
+
+  const selectAllTrades = () => {
+    const allIds = new Set(tradePositions.map(t => t.id))
+    setSelectedTradeIds(allIds)
+  }
+
+  const deselectAllTrades = () => {
+    setSelectedTradeIds(new Set())
+  }
+
   const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
   const pnlBgColor = profitLoss >= 0 ? 'bg-green-500' : 'bg-red-500'
 
@@ -579,11 +631,40 @@ export default function CandlestickChart() {
 
           {tradePositions.length > 0 && (
             <div className="bg-gray-700 rounded-lg p-4">
-              <h3 className="text-xs font-semibold text-gray-400 mb-2">Todas las Operaciones ({tradePositions.length})</h3>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-xs font-semibold text-gray-400">Todas las Operaciones ({tradePositions.length})</h3>
+                <div className="flex gap-1">
+                  <button
+                    onClick={selectAllTrades}
+                    className="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded transition-colors"
+                    title="Seleccionar todas"
+                  >
+                    ☑️ Todos
+                  </button>
+                  <button
+                    onClick={deselectAllTrades}
+                    className="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded transition-colors"
+                    title="Deseleccionar todas"
+                  >
+                    🔲 Ninguno
+                  </button>
+                </div>
+              </div>
+
+              {selectedTradeIds.size > 0 && (
+                <button
+                  onClick={deleteSelectedTrades}
+                  className="w-full mb-2 px-3 py-2 text-sm bg-red-600 hover:bg-red-700 rounded transition-colors font-semibold"
+                >
+                  🗑️ Eliminar {selectedTradeIds.size} seleccionada{selectedTradeIds.size > 1 ? 's' : ''}
+                </button>
+              )}
+
               <div className="max-h-64 overflow-y-auto space-y-2">
                 {tradePositions.map((trade, index) => {
                   const isCompleted = trade.exitPrice !== undefined
                   const isLong = trade.direction === 'long'
+                  const isSelected = selectedTradeIds.has(trade.id)
                   // Usar cálculo direccional para el porcentaje
                   const percentage = isCompleted
                     ? calculateProfitLoss(trade.entryPrice, trade.exitPrice!, trade.direction)
@@ -594,19 +675,38 @@ export default function CandlestickChart() {
                   return (
                     <div
                       key={trade.id}
-                      className={`text-xs p-2 rounded border-l-4 ${directionBorder} ${isCompleted ? 'bg-gray-600' : 'bg-blue-900 border border-blue-500'}`}
+                      className={`text-xs p-2 rounded border-l-4 ${directionBorder} ${
+                        isSelected ? 'bg-blue-800 ring-2 ring-blue-400' : isCompleted ? 'bg-gray-600' : 'bg-blue-900 border border-blue-500'
+                      }`}
                     >
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-400">#${index + 1} {directionBadge} {isLong ? 'LONG' : 'SHORT'}</span>
-                        <span className={color}>{isCompleted ? (percentage >= 0 ? '+' : '') + percentage.toFixed(2) + '%' : 'En curso...'}</span>
-                      </div>
-                      <div className="font-mono text-gray-300">
-                        E: ${trade.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        {isCompleted && (
-                          <span className="ml-2">
-                            S: ${trade.exitPrice!.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                        )}
+                      <div className="flex justify-between items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleTradeSelection(trade.id)}
+                          className="mt-1 w-4 h-4 rounded cursor-pointer"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">#${index + 1} {directionBadge} {isLong ? 'LONG' : 'SHORT'}</span>
+                            <span className={color}>{isCompleted ? (percentage >= 0 ? '+' : '') + percentage.toFixed(2) + '%' : 'En curso...'}</span>
+                          </div>
+                          <div className="font-mono text-gray-300">
+                            E: ${trade.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            {isCompleted && (
+                              <span className="ml-2">
+                                S: ${trade.exitPrice!.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => deleteTrade(trade.id)}
+                          className="text-red-400 hover:text-red-300 hover:bg-red-900 rounded p-1 transition-colors"
+                          title="Eliminar esta operación"
+                        >
+                          ✕
+                        </button>
                       </div>
                     </div>
                   )
@@ -622,7 +722,9 @@ export default function CandlestickChart() {
               <li>• Click en gráfico = Marcar entrada</li>
               <li>• Click de nuevo = Marcar salida</li>
               <li>• P&L se calcula según dirección</li>
-              <li>• Puedes tener múltiples operaciones</li>
+              <li>• Checkbox para seleccionar operaciones</li>
+              <li>• ✕ para eliminar individual</li>
+              <li>• Botón Eliminar para múltiples</li>
               <li>• Mueve el puntero para ver % actual</li>
               <li>• Cancelar Trade Actual = Solo el activo</li>
               <li>• Deshacer = Elimina última operación</li>
