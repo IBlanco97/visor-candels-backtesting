@@ -16,12 +16,7 @@ interface SavedRuler {
   endTime: number
 }
 
-interface RenderedRuler extends SavedRuler {
-  anchorX: number
-  anchorY: number
-  endX: number
-  endY: number
-}
+type RulerDomEntry = { rect: HTMLDivElement | null; anchorDot: HTMLDivElement | null; endDot: HTMLDivElement | null; statsBox: HTMLDivElement | null }
 
 interface TradePosition {
   id: string
@@ -93,8 +88,8 @@ export default function CandlestickChart() {
     try { return JSON.parse(localStorage.getItem('bitcoin-trader-rulers') || '[]') } catch { return [] }
   })
   const savedRulersRef = useRef<SavedRuler[]>([])
-  const [renderedRulers, setRenderedRulers] = useState<RenderedRuler[]>([])
-  const renderSavedRulersRef = useRef<() => void>(() => {})
+  const rulerDomRefs = useRef<Map<string, RulerDomEntry>>(new Map())
+  const rulerRafId = useRef<number | null>(null)
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -179,7 +174,6 @@ export default function CandlestickChart() {
         initialLoadCompleteRef.current = true
         setInitialLoadDone(true)
         console.log('Initial load complete set to true')
-        renderSavedRulersRef.current()
       } catch (error) {
         console.error('Error loading data:', error)
         setLoading(false)
@@ -271,25 +265,42 @@ export default function CandlestickChart() {
       }
     }
 
-    // Build pixel positions for all saved rulers from their chart coordinates
-    const renderSavedRulers = () => {
-      const ts = chart.timeScale()
-      setRenderedRulers(savedRulersRef.current.map(r => ({
-        ...r,
-        anchorX: ts.timeToCoordinate(r.anchorTime as Time) ?? -9999,
-        anchorY: candlestickSeries.priceToCoordinate(r.anchorPrice) ?? -9999,
-        endX: ts.timeToCoordinate(r.endTime as Time) ?? -9999,
-        endY: candlestickSeries.priceToCoordinate(r.endPrice) ?? -9999,
-      })))
-    }
-    renderSavedRulersRef.current = renderSavedRulers
-
     loadData()
 
     const loadMoreHistoricalDataRef = { current: loadMoreHistoricalData }
     const loadMoreFutureDataRef = { current: loadMoreFutureData }
 
-    let rulerRenderTimeout: ReturnType<typeof setTimeout> | null = null
+    // RAF loop: update saved ruler DOM positions at 60fps via direct style mutation (no React re-renders)
+    const drawRulerPositions = () => {
+      if (savedRulersRef.current.length > 0) {
+        const ts = chart.timeScale()
+        const containerW = chartContainerRef.current?.clientWidth ?? 900
+        for (const ruler of savedRulersRef.current) {
+          const entry = rulerDomRefs.current.get(ruler.id)
+          if (!entry) continue
+          const ax = ts.timeToCoordinate(ruler.anchorTime as Time) ?? -9999
+          const ay = candlestickSeries.priceToCoordinate(ruler.anchorPrice) ?? -9999
+          const ex = ts.timeToCoordinate(ruler.endTime as Time) ?? -9999
+          const ey = candlestickSeries.priceToCoordinate(ruler.endPrice) ?? -9999
+          const rLeft = Math.min(ax, ex)
+          const rTop = Math.min(ay, ey)
+          const rWidth = Math.abs(ex - ax)
+          const rHeight = Math.abs(ey - ay)
+          const statsX = rLeft + rWidth + 6 > containerW - 180 ? rLeft - 178 : rLeft + rWidth + 6
+          if (entry.rect) {
+            entry.rect.style.left = `${rLeft}px`
+            entry.rect.style.top = `${rTop}px`
+            entry.rect.style.width = `${rWidth}px`
+            entry.rect.style.height = `${rHeight}px`
+          }
+          if (entry.anchorDot) { entry.anchorDot.style.left = `${ax - 4}px`; entry.anchorDot.style.top = `${ay - 4}px` }
+          if (entry.endDot)    { entry.endDot.style.left    = `${ex - 4}px`; entry.endDot.style.top    = `${ey - 4}px` }
+          if (entry.statsBox)  { entry.statsBox.style.left  = `${statsX}px`; entry.statsBox.style.top  = `${rTop}px` }
+        }
+      }
+      rulerRafId.current = requestAnimationFrame(drawRulerPositions)
+    }
+    rulerRafId.current = requestAnimationFrame(drawRulerPositions)
 
     const timeScale = chart.timeScale()
     timeScale.subscribeVisibleLogicalRangeChange((range: any) => {
@@ -320,9 +331,6 @@ export default function CandlestickChart() {
           }
         }, 500)
 
-        // Recompute saved ruler pixel positions after viewport settles
-        if (rulerRenderTimeout) clearTimeout(rulerRenderTimeout)
-        rulerRenderTimeout = setTimeout(renderSavedRulersRef.current, 80)
       }
     })
 
@@ -394,6 +402,7 @@ export default function CandlestickChart() {
     return () => {
       window.removeEventListener('resize', handleResize)
       chartEl.removeEventListener('mousemove', handleRulerMove)
+      if (rulerRafId.current) cancelAnimationFrame(rulerRafId.current)
       markersPluginRef.current?.detach()
       chart.remove()
     }
@@ -578,7 +587,6 @@ export default function CandlestickChart() {
   useEffect(() => {
     savedRulersRef.current = savedRulers
     localStorage.setItem('bitcoin-trader-rulers', JSON.stringify(savedRulers))
-    renderSavedRulersRef.current()
   }, [savedRulers])
 
   useEffect(() => {
@@ -806,8 +814,14 @@ export default function CandlestickChart() {
     }
   }
 
-  const deleteRuler = (id: string) => setSavedRulers(prev => prev.filter(r => r.id !== id))
-  const deleteAllRulers = () => setSavedRulers([])
+  const deleteRuler = (id: string) => {
+    setSavedRulers(prev => prev.filter(r => r.id !== id))
+    rulerDomRefs.current.delete(id)
+  }
+  const deleteAllRulers = () => {
+    setSavedRulers([])
+    rulerDomRefs.current.clear()
+  }
 
   const countCandlesInRange = (t1: number, t2: number): number => {
     const lo = Math.min(t1, t2)
@@ -975,8 +989,8 @@ export default function CandlestickChart() {
             className={`w-full h-full${rulerMode ? ' cursor-crosshair' : ''}`}
           />
 
-          {/* Saved rulers — persistent overlays */}
-          {renderedRulers.map(ruler => {
+          {/* Saved rulers — positions updated at 60fps via RAF (no React re-renders during scroll) */}
+          {savedRulers.map(ruler => {
             const priceDiff = ruler.endPrice - ruler.anchorPrice
             const pricePct = (priceDiff / ruler.anchorPrice) * 100
             const candleCount = countCandlesInRange(ruler.anchorTime, ruler.endTime)
@@ -985,34 +999,20 @@ export default function CandlestickChart() {
             const accentColor = isUp ? '#22ab94' : '#f7525f'
             const fillColor = isUp ? 'rgba(34,171,148,0.07)' : 'rgba(247,82,95,0.07)'
             const textCls = isUp ? 'text-emerald-400' : 'text-red-400'
-
-            const rLeft = Math.min(ruler.anchorX, ruler.endX)
-            const rTop = Math.min(ruler.anchorY, ruler.endY)
-            const rWidth = Math.abs(ruler.endX - ruler.anchorX)
-            const rHeight = Math.abs(ruler.endY - ruler.anchorY)
-
-            const containerW = chartContainerRef.current?.clientWidth ?? 900
-            const statsX = rLeft + rWidth + 6 > containerW - 180
-              ? rLeft - 178
-              : rLeft + rWidth + 6
-            const statsY = rTop
-
+            const setRef = (key: keyof RulerDomEntry) => (el: HTMLDivElement | null) => {
+              const prev = rulerDomRefs.current.get(ruler.id) ?? { rect: null, anchorDot: null, endDot: null, statsBox: null }
+              rulerDomRefs.current.set(ruler.id, { ...prev, [key]: el })
+            }
             return (
               <div key={ruler.id} className="absolute inset-0" style={{ zIndex: 4, pointerEvents: 'none' }}>
-                {/* Rectangle */}
+                {/* RAF sets left/top/width/height — initial values just need to exist */}
+                <div ref={setRef('rect')} className="absolute" style={{ border: `1.5px solid ${accentColor}`, background: fillColor }} />
+                <div ref={setRef('anchorDot')} className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ background: accentColor }} />
+                <div ref={setRef('endDot')} className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ background: accentColor }} />
                 <div
-                  className="absolute"
-                  style={{ left: rLeft, top: rTop, width: rWidth, height: rHeight, border: `1.5px solid ${accentColor}`, background: fillColor }}
-                />
-                {/* Anchor dot */}
-                <div className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ left: ruler.anchorX - 4, top: ruler.anchorY - 4, background: accentColor }} />
-                {/* End dot */}
-                <div className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ left: ruler.endX - 4, top: ruler.endY - 4, background: accentColor }} />
-
-                {/* Stats box — pointer-events restored so delete button is clickable */}
-                <div
+                  ref={setRef('statsBox')}
                   className="absolute rounded border border-gray-600 text-xs font-mono shadow-lg"
-                  style={{ left: statsX, top: statsY, minWidth: '170px', background: 'rgba(15,17,24,0.97)', zIndex: 10, pointerEvents: 'auto' }}
+                  style={{ minWidth: '170px', background: 'rgba(15,17,24,0.97)', zIndex: 10, pointerEvents: 'auto' }}
                   onClick={e => e.stopPropagation()}
                 >
                   <div className="flex items-start justify-between px-2.5 pt-2 pb-1.5 gap-2">
