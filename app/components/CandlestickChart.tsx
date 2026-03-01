@@ -65,6 +65,11 @@ export default function CandlestickChart() {
   const savePositionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [dateInput, setDateInput] = useState('')
+  const [rulerMode, setRulerMode] = useState(false)
+  const rulerModeRef = useRef(false)
+  const [rulerAnchor, setRulerAnchor] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
+  const [rulerCurrent, setRulerCurrent] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
+  const rulerAnchorRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null)
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -288,6 +293,21 @@ export default function CandlestickChart() {
     window.addEventListener('resize', handleResize)
     handleResize()
 
+    // Ruler tool: mouse move listener to track current position
+    const chartEl = chartContainerRef.current!
+    const handleRulerMove = (e: MouseEvent) => {
+      if (!rulerModeRef.current || !rulerAnchorRef.current) return
+      const rect = chartEl.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const time = timeScale.coordinateToTime(x)
+      const price = candlestickSeries.coordinateToPrice(y)
+      if (time !== null && price !== null) {
+        setRulerCurrent({ x, y, price, time: time as number })
+      }
+    }
+    chartEl.addEventListener('mousemove', handleRulerMove)
+
     chart.subscribeCrosshairMove((param: any) => {
       if (param.point && param.seriesData.size > 0) {
         const seriesData = param.seriesData.get(candlestickSeries)
@@ -311,6 +331,7 @@ export default function CandlestickChart() {
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      chartEl.removeEventListener('mousemove', handleRulerMove)
       markersPluginRef.current?.detach()
       chart.remove()
     }
@@ -328,6 +349,24 @@ export default function CandlestickChart() {
       const rect = chartContainerRef.current.getBoundingClientRect()
       const x = event.clientX - rect.left
       const y = event.clientY - rect.top
+
+      // Ruler tool intercepts all clicks when active
+      if (rulerModeRef.current) {
+        const time = chart.timeScale().coordinateToTime(x)
+        const price = candlestickSeries.coordinateToPrice(y)
+        if (time === null || price === null) return
+        if (!rulerAnchorRef.current) {
+          const anchor = { x, y, price, time: time as number }
+          setRulerAnchor(anchor)
+          rulerAnchorRef.current = anchor
+        } else {
+          // Second click clears the ruler so user can start a new measurement
+          setRulerAnchor(null)
+          setRulerCurrent(null)
+          rulerAnchorRef.current = null
+        }
+        return
+      }
 
       const timeScale = chart.timeScale()
       const time = timeScale.coordinateToTime(x)
@@ -421,6 +460,27 @@ export default function CandlestickChart() {
   useEffect(() => {
     tradeStageRef.current = tradeStage
   }, [tradeStage])
+
+  useEffect(() => {
+    rulerModeRef.current = rulerMode
+    if (!rulerMode) {
+      setRulerAnchor(null)
+      setRulerCurrent(null)
+      rulerAnchorRef.current = null
+    }
+  }, [rulerMode])
+
+  useEffect(() => {
+    rulerAnchorRef.current = rulerAnchor
+  }, [rulerAnchor])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && rulerModeRef.current) setRulerMode(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Restaurar marcadores del gráfico tras cualquier carga (inicial o navegación a fecha)
   useEffect(() => {
@@ -639,6 +699,25 @@ export default function CandlestickChart() {
     }
   }
 
+  const countCandlesInRange = (t1: number, t2: number): number => {
+    const lo = Math.min(t1, t2)
+    const hi = Math.max(t1, t2)
+    return loadedCandlesRef.current.filter(c => {
+      const t = c.time as number
+      return t >= lo && t <= hi
+    }).length
+  }
+
+  const formatTimeDiff = (secs: number): string => {
+    const abs = Math.abs(secs)
+    const m = Math.floor(abs / 60)
+    const h = Math.floor(m / 60)
+    const d = Math.floor(h / 24)
+    if (d > 0) return `${d}d ${h % 24}h`
+    if (h > 0) return `${h}h ${m % 60}m`
+    return `${m}m`
+  }
+
   const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
   const pnlBgColor = profitLoss >= 0 ? 'bg-green-500' : 'bg-red-500'
 
@@ -681,6 +760,20 @@ export default function CandlestickChart() {
               📉 SHORT
             </button>
           </div>
+          <button
+              onClick={() => {
+                setRulerMode(prev => !prev)
+                if (tradeStage !== 'idle') resetActiveTrade()
+              }}
+              className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 ${
+                rulerMode
+                  ? 'bg-cyan-600 text-white font-semibold ring-2 ring-cyan-400'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+              title="Herramienta de regla (Esc para salir)"
+            >
+              📏 Regla
+            </button>
           <div className="flex items-center gap-2 border-l border-gray-600 pl-4">
             <span className="text-xs text-gray-400 whitespace-nowrap">Ir a fecha:</span>
             <input
@@ -753,7 +846,109 @@ export default function CandlestickChart() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
-          <div ref={chartContainerRef} data-testid="chart-container" className="w-full h-full" />
+          <div
+            ref={chartContainerRef}
+            data-testid="chart-container"
+            className={`w-full h-full${rulerMode ? ' cursor-crosshair' : ''}`}
+          />
+
+          {/* Ruler overlay — rendered above the chart canvas, pointer-events disabled */}
+          {rulerMode && rulerAnchor && (() => {
+            const priceDiff = rulerCurrent ? rulerCurrent.price - rulerAnchor.price : 0
+            const pricePct = rulerAnchor.price !== 0 ? (priceDiff / rulerAnchor.price) * 100 : 0
+            const timeDiff = rulerCurrent ? rulerCurrent.time - rulerAnchor.time : 0
+            const candleCount = rulerCurrent ? countCandlesInRange(rulerAnchor.time, rulerCurrent.time) : 0
+            const duration = formatTimeDiff(timeDiff)
+            const isUp = priceDiff >= 0
+            const accentColor = isUp ? '#22ab94' : '#f7525f'
+            const fillColor = isUp ? 'rgba(34,171,148,0.08)' : 'rgba(247,82,95,0.08)'
+            const textCls = isUp ? 'text-emerald-400' : 'text-red-400'
+
+            const rLeft = rulerCurrent ? Math.min(rulerAnchor.x, rulerCurrent.x) : rulerAnchor.x
+            const rTop = rulerCurrent ? Math.min(rulerAnchor.y, rulerCurrent.y) : rulerAnchor.y
+            const rWidth = rulerCurrent ? Math.abs(rulerCurrent.x - rulerAnchor.x) : 0
+            const rHeight = rulerCurrent ? Math.abs(rulerCurrent.y - rulerAnchor.y) : 0
+
+            // Stats box: prefer right side of cursor, flip if near edge
+            const boxX = rulerCurrent
+              ? (rulerCurrent.x > (chartContainerRef.current?.clientWidth ?? 800) - 190
+                ? rulerCurrent.x - 176
+                : rulerCurrent.x + 14)
+              : rulerAnchor.x + 14
+            const boxY = rulerCurrent
+              ? (rulerCurrent.y > (chartContainerRef.current?.clientHeight ?? 600) - 110
+                ? rulerCurrent.y - 96
+                : rulerCurrent.y + 10)
+              : rulerAnchor.y + 10
+
+            return (
+              <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 5 }}>
+                {/* Anchor dot */}
+                <div
+                  className="absolute w-2.5 h-2.5 rounded-full border-2 border-gray-900"
+                  style={{ left: rulerAnchor.x - 5, top: rulerAnchor.y - 5, background: accentColor }}
+                />
+
+                {rulerCurrent && (
+                  <>
+                    {/* Measurement rectangle */}
+                    <div
+                      className="absolute"
+                      style={{
+                        left: rLeft,
+                        top: rTop,
+                        width: rWidth,
+                        height: rHeight,
+                        border: `1.5px solid ${accentColor}`,
+                        background: fillColor,
+                      }}
+                    />
+
+                    {/* Current point dot */}
+                    <div
+                      className="absolute w-2.5 h-2.5 rounded-full border-2 border-gray-900"
+                      style={{ left: rulerCurrent.x - 5, top: rulerCurrent.y - 5, background: accentColor }}
+                    />
+
+                    {/* Stats info box */}
+                    <div
+                      className="absolute rounded border border-gray-600 px-2.5 py-2 text-xs font-mono shadow-lg"
+                      style={{
+                        left: boxX,
+                        top: boxY,
+                        minWidth: '164px',
+                        background: 'rgba(15,17,24,0.97)',
+                        zIndex: 10,
+                      }}
+                    >
+                      <div className={`text-sm font-bold leading-tight ${textCls}`}>
+                        {priceDiff >= 0 ? '+' : ''}
+                        {priceDiff.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                      </div>
+                      <div className={`leading-tight ${textCls}`}>
+                        {pricePct >= 0 ? '+' : ''}{pricePct.toFixed(3)}%
+                      </div>
+                      <div className="border-t border-gray-700 mt-1.5 pt-1.5 text-gray-300 leading-tight">
+                        {candleCount} vela{candleCount !== 1 ? 's' : ''}
+                      </div>
+                      <div className="text-blue-300 leading-tight">{duration}</div>
+                    </div>
+                  </>
+                )}
+
+                {/* Hint when anchor is set but mouse hasn't moved yet */}
+                {!rulerCurrent && (
+                  <div
+                    className="absolute text-xs text-cyan-300 bg-gray-900 bg-opacity-80 px-2 py-1 rounded border border-cyan-800"
+                    style={{ left: rulerAnchor.x + 10, top: rulerAnchor.y - 24 }}
+                  >
+                    Mueve el mouse para medir
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75">
               <div className="text-lg">Cargando datos...</div>
@@ -908,13 +1103,16 @@ export default function CandlestickChart() {
               <li>1. Pulsa <strong>LONG</strong> o <strong>SHORT</strong></li>
               <li>2. Clic en el gráfico = Entrada</li>
               <li>3. Clic de nuevo = Salida</li>
-              <li className="pt-1 border-t border-gray-600">• Navega sin abrir trades hasta pulsar el botón</li>
+              <li className="pt-1 border-t border-gray-600 font-semibold text-cyan-400">📏 Regla</li>
+              <li>• Activa con el botón Regla</li>
+              <li>• 1er clic = ancla el punto</li>
+              <li>• Mueve el mouse = rectángulo vivo</li>
+              <li>• 2do clic = nueva medición</li>
+              <li>• Esc = desactivar regla</li>
+              <li className="pt-1 border-t border-gray-600">• Navega sin trades hasta pulsar botón</li>
               <li>• Mueve el puntero para ver % actual</li>
-              <li>• Checkbox para seleccionar operaciones</li>
               <li>• ✕ para eliminar individual</li>
-              <li>• Cancelar = Cancela el trade activo</li>
               <li>• Deshacer = Elimina última operación</li>
-              <li>• Resetear Todos = Borrar todo</li>
             </ul>
           </div>
         </div>
