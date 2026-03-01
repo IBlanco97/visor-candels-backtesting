@@ -8,6 +8,21 @@ import { fetchBitcoinCandlesticks, fetchCandlesWithCache } from '../services/bin
 type TradeStage = 'idle' | 'waiting_entry' | 'entry_placed'
 type TradeDirection = 'long' | 'short'
 
+interface SavedRuler {
+  id: string
+  anchorPrice: number
+  anchorTime: number
+  endPrice: number
+  endTime: number
+}
+
+interface RenderedRuler extends SavedRuler {
+  anchorX: number
+  anchorY: number
+  endX: number
+  endY: number
+}
+
 interface TradePosition {
   id: string
   direction: TradeDirection
@@ -70,8 +85,16 @@ export default function CandlestickChart() {
   const [rulerAnchor, setRulerAnchor] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
   const [rulerCurrent, setRulerCurrent] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
   const rulerAnchorRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null)
+  const rulerCurrentRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null)
   const rulerAnchorLineRef = useRef<any>(null)
   const rulerCurrentLineRef = useRef<any>(null)
+  const [savedRulers, setSavedRulers] = useState<SavedRuler[]>(() => {
+    if (typeof window === 'undefined') return []
+    try { return JSON.parse(localStorage.getItem('bitcoin-trader-rulers') || '[]') } catch { return [] }
+  })
+  const savedRulersRef = useRef<SavedRuler[]>([])
+  const [renderedRulers, setRenderedRulers] = useState<RenderedRuler[]>([])
+  const renderSavedRulersRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -156,6 +179,7 @@ export default function CandlestickChart() {
         initialLoadCompleteRef.current = true
         setInitialLoadDone(true)
         console.log('Initial load complete set to true')
+        renderSavedRulersRef.current()
       } catch (error) {
         console.error('Error loading data:', error)
         setLoading(false)
@@ -247,10 +271,25 @@ export default function CandlestickChart() {
       }
     }
 
+    // Build pixel positions for all saved rulers from their chart coordinates
+    const renderSavedRulers = () => {
+      const ts = chart.timeScale()
+      setRenderedRulers(savedRulersRef.current.map(r => ({
+        ...r,
+        anchorX: ts.timeToCoordinate(r.anchorTime as Time) ?? -9999,
+        anchorY: candlestickSeries.priceToCoordinate(r.anchorPrice) ?? -9999,
+        endX: ts.timeToCoordinate(r.endTime as Time) ?? -9999,
+        endY: candlestickSeries.priceToCoordinate(r.endPrice) ?? -9999,
+      })))
+    }
+    renderSavedRulersRef.current = renderSavedRulers
+
     loadData()
 
     const loadMoreHistoricalDataRef = { current: loadMoreHistoricalData }
     const loadMoreFutureDataRef = { current: loadMoreFutureData }
+
+    let rulerRenderTimeout: ReturnType<typeof setTimeout> | null = null
 
     const timeScale = chart.timeScale()
     timeScale.subscribeVisibleLogicalRangeChange((range: any) => {
@@ -280,6 +319,10 @@ export default function CandlestickChart() {
             }))
           }
         }, 500)
+
+        // Recompute saved ruler pixel positions after viewport settles
+        if (rulerRenderTimeout) clearTimeout(rulerRenderTimeout)
+        rulerRenderTimeout = setTimeout(renderSavedRulersRef.current, 80)
       }
     })
 
@@ -305,7 +348,9 @@ export default function CandlestickChart() {
       const time = timeScale.coordinateToTime(x)
       const price = candlestickSeries.coordinateToPrice(y)
       if (time !== null && price !== null) {
-        setRulerCurrent({ x, y, price, time: time as number })
+        const cur = { x, y, price, time: time as number }
+        setRulerCurrent(cur)
+        rulerCurrentRef.current = cur
         // Update current price line on the axis
         const isAbove = price >= rulerAnchorRef.current.price
         const lineColor = isAbove ? 'rgba(34,171,148,0.9)' : 'rgba(247,82,95,0.9)'
@@ -386,9 +431,22 @@ export default function CandlestickChart() {
             title: '',
           })
         } else {
-          // Second click clears the ruler so user can start a new measurement
-          candlestickSeries.removePriceLine(rulerAnchorLineRef.current)
-          rulerAnchorLineRef.current = null
+          // Second click: save the ruler and clear active state for a new measurement
+          if (rulerCurrentRef.current) {
+            const newRuler: SavedRuler = {
+              id: Date.now().toString(),
+              anchorPrice: rulerAnchorRef.current.price,
+              anchorTime: rulerAnchorRef.current.time,
+              endPrice: rulerCurrentRef.current.price,
+              endTime: rulerCurrentRef.current.time,
+            }
+            setSavedRulers(prev => [...prev, newRuler])
+          }
+          // Remove active price lines
+          if (rulerAnchorLineRef.current) {
+            candlestickSeries.removePriceLine(rulerAnchorLineRef.current)
+            rulerAnchorLineRef.current = null
+          }
           if (rulerCurrentLineRef.current) {
             candlestickSeries.removePriceLine(rulerCurrentLineRef.current)
             rulerCurrentLineRef.current = null
@@ -396,6 +454,7 @@ export default function CandlestickChart() {
           setRulerAnchor(null)
           setRulerCurrent(null)
           rulerAnchorRef.current = null
+          rulerCurrentRef.current = null
         }
         return
       }
@@ -515,6 +574,12 @@ export default function CandlestickChart() {
   useEffect(() => {
     rulerAnchorRef.current = rulerAnchor
   }, [rulerAnchor])
+
+  useEffect(() => {
+    savedRulersRef.current = savedRulers
+    localStorage.setItem('bitcoin-trader-rulers', JSON.stringify(savedRulers))
+    renderSavedRulersRef.current()
+  }, [savedRulers])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -741,6 +806,9 @@ export default function CandlestickChart() {
     }
   }
 
+  const deleteRuler = (id: string) => setSavedRulers(prev => prev.filter(r => r.id !== id))
+  const deleteAllRulers = () => setSavedRulers([])
+
   const countCandlesInRange = (t1: number, t2: number): number => {
     const lo = Math.min(t1, t2)
     const hi = Math.max(t1, t2)
@@ -814,8 +882,21 @@ export default function CandlestickChart() {
               }`}
               title="Herramienta de regla (Esc para salir)"
             >
-              📏 Regla
+              📏 Regla{savedRulers.length > 0 && (
+                <span className="bg-cyan-800 text-cyan-200 text-xs px-1.5 py-0.5 rounded-full leading-none">
+                  {savedRulers.length}
+                </span>
+              )}
             </button>
+            {savedRulers.length > 0 && (
+              <button
+                onClick={deleteAllRulers}
+                className="px-2 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-red-900 hover:text-red-300 transition-colors"
+                title="Borrar todas las reglas"
+              >
+                🗑️ Reglas
+              </button>
+            )}
           <div className="flex items-center gap-2 border-l border-gray-600 pl-4">
             <span className="text-xs text-gray-400 whitespace-nowrap">Ir a fecha:</span>
             <input
@@ -894,7 +975,69 @@ export default function CandlestickChart() {
             className={`w-full h-full${rulerMode ? ' cursor-crosshair' : ''}`}
           />
 
-          {/* Ruler overlay — rendered above the chart canvas, pointer-events disabled */}
+          {/* Saved rulers — persistent overlays */}
+          {renderedRulers.map(ruler => {
+            const priceDiff = ruler.endPrice - ruler.anchorPrice
+            const pricePct = (priceDiff / ruler.anchorPrice) * 100
+            const candleCount = countCandlesInRange(ruler.anchorTime, ruler.endTime)
+            const duration = formatTimeDiff(ruler.endTime - ruler.anchorTime)
+            const isUp = priceDiff >= 0
+            const accentColor = isUp ? '#22ab94' : '#f7525f'
+            const fillColor = isUp ? 'rgba(34,171,148,0.07)' : 'rgba(247,82,95,0.07)'
+            const textCls = isUp ? 'text-emerald-400' : 'text-red-400'
+
+            const rLeft = Math.min(ruler.anchorX, ruler.endX)
+            const rTop = Math.min(ruler.anchorY, ruler.endY)
+            const rWidth = Math.abs(ruler.endX - ruler.anchorX)
+            const rHeight = Math.abs(ruler.endY - ruler.anchorY)
+
+            const containerW = chartContainerRef.current?.clientWidth ?? 900
+            const statsX = rLeft + rWidth + 6 > containerW - 180
+              ? rLeft - 178
+              : rLeft + rWidth + 6
+            const statsY = rTop
+
+            return (
+              <div key={ruler.id} className="absolute inset-0" style={{ zIndex: 4, pointerEvents: 'none' }}>
+                {/* Rectangle */}
+                <div
+                  className="absolute"
+                  style={{ left: rLeft, top: rTop, width: rWidth, height: rHeight, border: `1.5px solid ${accentColor}`, background: fillColor }}
+                />
+                {/* Anchor dot */}
+                <div className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ left: ruler.anchorX - 4, top: ruler.anchorY - 4, background: accentColor }} />
+                {/* End dot */}
+                <div className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ left: ruler.endX - 4, top: ruler.endY - 4, background: accentColor }} />
+
+                {/* Stats box — pointer-events restored so delete button is clickable */}
+                <div
+                  className="absolute rounded border border-gray-600 text-xs font-mono shadow-lg"
+                  style={{ left: statsX, top: statsY, minWidth: '170px', background: 'rgba(15,17,24,0.97)', zIndex: 10, pointerEvents: 'auto' }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between px-2.5 pt-2 pb-1.5 gap-2">
+                    <div>
+                      <div className={`text-sm font-bold leading-tight ${textCls}`}>
+                        {priceDiff >= 0 ? '+' : ''}{priceDiff.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                      </div>
+                      <div className={`leading-tight ${textCls}`}>{pricePct >= 0 ? '+' : ''}{pricePct.toFixed(3)}%</div>
+                      <div className="border-t border-gray-700 mt-1.5 pt-1 text-gray-300 leading-tight">{candleCount} vela{candleCount !== 1 ? 's' : ''}</div>
+                      <div className="text-blue-300 leading-tight">{duration}</div>
+                    </div>
+                    <button
+                      onClick={() => deleteRuler(ruler.id)}
+                      className="text-gray-500 hover:text-red-400 transition-colors text-base leading-none mt-0.5 flex-shrink-0"
+                      title="Eliminar regla"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+
+          {/* Active ruler overlay — rendered above the chart canvas, pointer-events disabled */}
           {rulerMode && rulerAnchor && (() => {
             const priceDiff = rulerCurrent ? rulerCurrent.price - rulerAnchor.price : 0
             const pricePct = rulerAnchor.price !== 0 ? (priceDiff / rulerAnchor.price) * 100 : 0
