@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createChart, CandlestickSeries, ColorType, Time, CandlestickData, createSeriesMarkers, ISeriesMarkersPluginApi } from 'lightweight-charts'
 import { fetchBitcoinCandlesticks, fetchCandlesWithCache } from '../services/binance'
 
-type TradeStage = 'idle' | 'entry_placed' | 'exit_placed'
+type TradeStage = 'idle' | 'waiting_entry' | 'entry_placed'
 type TradeDirection = 'long' | 'short'
 
 interface TradePosition {
@@ -346,7 +346,7 @@ export default function CandlestickChart() {
 
       if (clickedPrice === 0) return
 
-      if (tradeStage === 'idle') {
+      if (tradeStage === 'waiting_entry') {
         const newId = Date.now().toString()
         const newPosition: TradePosition = {
           id: newId,
@@ -391,6 +391,7 @@ export default function CandlestickChart() {
         setTradePositions(updatedPositions)
         setTradeStage('idle')
         setActiveTradeId(null)
+        setNextTradeDirection('long') // reset para que ningún botón quede activo visualmente
       }
     }
 
@@ -518,6 +519,7 @@ export default function CandlestickChart() {
     setTradeStage('idle')
     setActiveTradeId(null)
     setProfitLoss(0)
+    setNextTradeDirection('long')
   }
 
   const undoLastTrade = () => {
@@ -646,20 +648,32 @@ export default function CandlestickChart() {
           <h1 className="text-xl font-bold">Bitcoin Trader - 5m</h1>
           <div className="flex gap-2">
             <button
-              onClick={() => setNextTradeDirection('long')}
+              onClick={() => {
+                if (activeTradeId) resetActiveTrade()
+                setNextTradeDirection('long')
+                setTradeStage('waiting_entry')
+              }}
               className={`px-3 py-1 text-sm rounded transition-colors ${
-                nextTradeDirection === 'long'
-                  ? 'bg-green-600 text-white font-semibold'
+                tradeStage === 'waiting_entry' && nextTradeDirection === 'long'
+                  ? 'bg-green-500 text-white font-semibold ring-2 ring-green-300 animate-pulse'
+                  : tradeStage === 'entry_placed' && nextTradeDirection === 'long'
+                  ? 'bg-green-700 text-white font-semibold'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
             >
               📈 LONG
             </button>
             <button
-              onClick={() => setNextTradeDirection('short')}
+              onClick={() => {
+                if (activeTradeId) resetActiveTrade()
+                setNextTradeDirection('short')
+                setTradeStage('waiting_entry')
+              }}
               className={`px-3 py-1 text-sm rounded transition-colors ${
-                nextTradeDirection === 'short'
-                  ? 'bg-red-600 text-white font-semibold'
+                tradeStage === 'waiting_entry' && nextTradeDirection === 'short'
+                  ? 'bg-red-500 text-white font-semibold ring-2 ring-red-300 animate-pulse'
+                  : tradeStage === 'entry_placed' && nextTradeDirection === 'short'
+                  ? 'bg-red-700 text-white font-semibold'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
             >
@@ -697,7 +711,7 @@ export default function CandlestickChart() {
                onClick={resetActiveTrade}
                className="px-4 py-1 text-sm bg-yellow-600 hover:bg-yellow-700 rounded transition-colors"
              >
-               Cancelar Trade Actual
+               {tradeStage === 'waiting_entry' ? 'Cancelar' : 'Cancelar Trade Actual'}
              </button>
            )}
            {tradePositions.length > 0 && (
@@ -749,8 +763,13 @@ export default function CandlestickChart() {
           <div className="bg-gray-700 rounded-lg p-4">
             <h2 className="text-sm font-semibold text-gray-400 mb-2">Estado del Trade</h2>
             <div className="text-lg font-bold">
-              {tradeStage === 'idle' && 'Esperando entrada...'}
-              {tradeStage === 'entry_placed' && 'Colocando salida...'}
+              {tradeStage === 'idle' && <span className="text-gray-400 text-sm">Pulsa LONG o SHORT para empezar</span>}
+              {tradeStage === 'waiting_entry' && (
+                <span className={nextTradeDirection === 'long' ? 'text-green-400' : 'text-red-400'}>
+                  Clic para marcar entrada {nextTradeDirection === 'long' ? '📈 LONG' : '📉 SHORT'}
+                </span>
+              )}
+              {tradeStage === 'entry_placed' && 'Clic para marcar salida...'}
             </div>
           </div>
 
@@ -874,15 +893,14 @@ export default function CandlestickChart() {
           <div className="bg-gray-700 rounded-lg p-4 mt-auto">
             <h3 className="text-xs font-semibold text-gray-400 mb-2">Instrucciones</h3>
             <ul className="text-xs space-y-1 text-gray-300">
-              <li>• Selecciona LONG o SHORT antes de entrar</li>
-              <li>• Click en gráfico = Marcar entrada</li>
-              <li>• Click de nuevo = Marcar salida</li>
-              <li>• P&L se calcula según dirección</li>
+              <li>1. Pulsa <strong>LONG</strong> o <strong>SHORT</strong></li>
+              <li>2. Clic en el gráfico = Entrada</li>
+              <li>3. Clic de nuevo = Salida</li>
+              <li className="pt-1 border-t border-gray-600">• Navega sin abrir trades hasta pulsar el botón</li>
+              <li>• Mueve el puntero para ver % actual</li>
               <li>• Checkbox para seleccionar operaciones</li>
               <li>• ✕ para eliminar individual</li>
-              <li>• Botón Eliminar para múltiples</li>
-              <li>• Mueve el puntero para ver % actual</li>
-              <li>• Cancelar Trade Actual = Solo el activo</li>
+              <li>• Cancelar = Cancela el trade activo</li>
               <li>• Deshacer = Elimina última operación</li>
               <li>• Resetear Todos = Borrar todo</li>
             </ul>
