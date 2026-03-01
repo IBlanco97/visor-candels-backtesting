@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createChart, CandlestickSeries, ColorType, Time, CandlestickData, createSeriesMarkers, ISeriesMarkersPluginApi } from 'lightweight-charts'
-import { fetchBitcoinCandlesticks } from '../services/binance'
+import { fetchBitcoinCandlesticks, fetchCandlesWithCache } from '../services/binance'
 
 type TradeStage = 'idle' | 'entry_placed' | 'exit_placed'
 type TradeDirection = 'long' | 'short'
@@ -33,7 +33,15 @@ export default function CandlestickChart() {
   const [currentPrice, setCurrentPrice] = useState<number>(0)
   const [tradeStage, setTradeStage] = useState<TradeStage>('idle')
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null)
-  const [tradePositions, setTradePositions] = useState<TradePosition[]>([])
+  const [tradePositions, setTradePositions] = useState<TradePosition[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const stored = localStorage.getItem('bitcoin-trader-positions')
+      return stored ? JSON.parse(stored) : []
+    } catch {
+      return []
+    }
+  })
   const [selectedTradeIds, setSelectedTradeIds] = useState<Set<string>>(new Set())
   const [nextTradeDirection, setNextTradeDirection] = useState<TradeDirection>('long')
   const nextTradeDirectionRef = useRef<TradeDirection>('long')
@@ -49,6 +57,13 @@ export default function CandlestickChart() {
   const hasMoreHistoricalDataRef = useRef(true)
   const [hasMoreHistoricalData, setHasMoreHistoricalData] = useState(true)
   const oldestCandleTimeRef = useRef<number | null>(null)
+  const newestCandleTimeRef = useRef<number | null>(null)
+  const hasMoreFutureDataRef = useRef(false)
+  const loadingMoreFutureRef = useRef(false)
+  const [loadingMoreFuture, setLoadingMoreFuture] = useState(false)
+  const savePositionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [initialLoadDone, setInitialLoadDone] = useState(false)
+  const [dateInput, setDateInput] = useState('')
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -106,11 +121,15 @@ export default function CandlestickChart() {
 
     const loadData = async () => {
       console.log('=== loadData called ===')
+      // Guard against React StrictMode double-invocation: si ya hay datos cargados, no sobreescribir
+      if (loadedCandlesRef.current.length > 0) return
       try {
         console.log('Setting loading to true')
         setLoading(true)
         initialLoadCompleteRef.current = false
-        const data = await fetchBitcoinCandlesticks('15m', 1000)
+        const data = await fetchBitcoinCandlesticks('5m', 1000)
+        // Segunda comprobación tras el await: otra invocación concurrente o navigateToDate pudo haber cargado datos
+        if (loadedCandlesRef.current.length > 0) return
         console.log('Received initial data:', data.length, 'candles')
         candlestickSeries.setData(data)
         loadedCandlesRef.current = data
@@ -120,11 +139,14 @@ export default function CandlestickChart() {
           setCurrentPrice(lastCandle.close)
           const firstCandleTime = data[0].time
           oldestCandleTimeRef.current = typeof firstCandleTime === 'number' ? firstCandleTime : 0
+          newestCandleTimeRef.current = typeof lastCandle.time === 'number' ? lastCandle.time : 0
+          hasMoreFutureDataRef.current = false
           console.log('Oldest candle time:', oldestCandleTimeRef.current, new Date(oldestCandleTimeRef.current * 1000))
         }
         console.log('Setting loading to false')
         setLoading(false)
         initialLoadCompleteRef.current = true
+        setInitialLoadDone(true)
         console.log('Initial load complete set to true')
       } catch (error) {
         console.error('Error loading data:', error)
@@ -149,49 +171,23 @@ export default function CandlestickChart() {
         setLoadingMore(true)
         const endTime = (oldestCandleTimeRef.current * 1000) - 1
         console.log('Fetching more data with endTime:', new Date(endTime))
-        const newData = await fetchBitcoinCandlesticks('15m', 1000, endTime)
+        const newData = await fetchCandlesWithCache('5m', 1000, endTime)
         console.log('Received new data:', newData.length, 'candles')
 
         if (newData.length === 0) {
           console.log('No more data available')
           hasMoreHistoricalDataRef.current = false
           setHasMoreHistoricalData(false)
-        } else if (newData.length < 1000) {
-          console.log('Reached end of historical data (got', newData.length, 'candles)')
-          hasMoreHistoricalDataRef.current = false
-          setHasMoreHistoricalData(false)
-          const allData = [...newData, ...loadedCandlesRef.current]
-          candlestickSeries.setData(allData)
-          loadedCandlesRef.current = allData
-          setLoadedCandles(allData)
-          const firstCandleTime = newData[0].time
-          oldestCandleTimeRef.current = typeof firstCandleTime === 'number' ? firstCandleTime : 0
         } else {
           const allData = [...newData, ...loadedCandlesRef.current]
           console.log('Updating series with total:', allData.length, 'candles')
+          const visibleRange = chart.timeScale().getVisibleRange()
           candlestickSeries.setData(allData)
+          if (visibleRange) chart.timeScale().setVisibleRange(visibleRange)
           loadedCandlesRef.current = allData
           setLoadedCandles(allData)
           const firstCandleTime = newData[0].time
           oldestCandleTimeRef.current = typeof firstCandleTime === 'number' ? firstCandleTime : 0
-
-          const timeScale = chart.timeScale()
-          const currentTimeRange = timeScale.getVisibleRange()
-          console.log('Current visible range:', currentTimeRange)
-          if (currentTimeRange) {
-            let fromValue: number
-            if (typeof currentTimeRange.from === 'number') {
-              fromValue = currentTimeRange.from
-            } else {
-              fromValue = parseInt(currentTimeRange.from as string)
-            }
-            const newFrom = fromValue - newData.length
-            console.log('Setting visible range from', newFrom, 'to', currentTimeRange.to)
-            timeScale.setVisibleRange({
-              from: newFrom as Time,
-              to: currentTimeRange.to
-            })
-          }
         }
       } catch (error) {
         console.error('Error loading more historical data:', error)
@@ -201,27 +197,81 @@ export default function CandlestickChart() {
       }
     }
 
+    const loadMoreFutureData = async () => {
+      if (loadingMoreFutureRef.current || !hasMoreFutureDataRef.current || !newestCandleTimeRef.current) return
+
+      try {
+        loadingMoreFutureRef.current = true
+        setLoadingMoreFuture(true)
+        const startTime = (newestCandleTimeRef.current * 1000) + 1
+        const newData = await fetchCandlesWithCache('5m', 1000, undefined, startTime)
+
+        // Filtrar candles que ya están cargados (el caché puede devolver el último candle ya presente)
+        const newestLoaded = newestCandleTimeRef.current!
+        const filteredNewData = newData.filter(c => (c.time as number) > newestLoaded)
+
+        if (filteredNewData.length === 0) {
+          hasMoreFutureDataRef.current = false
+        } else {
+          const allData = [...loadedCandlesRef.current, ...filteredNewData]
+
+          // Guardar posición visible antes de añadir datos para que no salte
+          const visibleRange = chart.timeScale().getVisibleRange()
+          candlestickSeries.setData(allData)
+          if (visibleRange) {
+            chart.timeScale().setVisibleRange(visibleRange)
+          }
+
+          loadedCandlesRef.current = allData
+          setLoadedCandles(allData)
+          const lastCandleTime = filteredNewData[filteredNewData.length - 1].time
+          newestCandleTimeRef.current = typeof lastCandleTime === 'number' ? lastCandleTime : 0
+
+          if (newData.length < 1000) {
+            hasMoreFutureDataRef.current = false
+          }
+        }
+      } catch (error) {
+        console.error('Error al cargar datos futuros:', error)
+      } finally {
+        loadingMoreFutureRef.current = false
+        setLoadingMoreFuture(false)
+      }
+    }
+
     loadData()
 
     const loadMoreHistoricalDataRef = { current: loadMoreHistoricalData }
+    const loadMoreFutureDataRef = { current: loadMoreFutureData }
 
     const timeScale = chart.timeScale()
     timeScale.subscribeVisibleLogicalRangeChange((range: any) => {
       if (range && range.from !== null && range.to !== null) {
         const isAtBeginning = range.from <= 10
-        console.log('=== Visible range change ===')
-        console.log('range.from:', range.from)
-        console.log('range.to:', range.to)
-        console.log('isAtBeginning:', isAtBeginning)
-        console.log('loading:', loading)
-        console.log('initialLoadCompleteRef.current:', initialLoadCompleteRef.current)
-        console.log('loadingMoreRef.current:', loadingMoreRef.current)
-        console.log('hasMoreHistoricalDataRef.current:', hasMoreHistoricalDataRef.current)
+        const isAtEnd = range.to >= loadedCandlesRef.current.length - 10
 
         if (isAtBeginning && initialLoadCompleteRef.current && !loadingMoreRef.current && hasMoreHistoricalDataRef.current) {
-          console.log('Calling loadMoreHistoricalData')
           loadMoreHistoricalDataRef.current()
         }
+
+        if (isAtEnd && initialLoadCompleteRef.current && !loadingMoreFutureRef.current && hasMoreFutureDataRef.current) {
+          loadMoreFutureDataRef.current()
+        }
+
+        // Guardar posición visible con debounce para no saturar localStorage
+        if (savePositionTimeoutRef.current) clearTimeout(savePositionTimeoutRef.current)
+        savePositionTimeoutRef.current = setTimeout(() => {
+          const timeRange = chart.timeScale().getVisibleRange()
+          if (timeRange) {
+            const from = timeRange.from as number
+            const to = timeRange.to as number
+            localStorage.setItem('bitcoin-trader-chart-position', JSON.stringify({
+              from,
+              to,
+              centerTime: Math.floor((from + to) / 2),
+            }))
+          }
+        }, 500)
       }
     })
 
@@ -355,6 +405,7 @@ export default function CandlestickChart() {
 
   useEffect(() => {
     tradePositionsRef.current = tradePositions
+    localStorage.setItem('bitcoin-trader-positions', JSON.stringify(tradePositions))
   }, [tradePositions])
 
   useEffect(() => {
@@ -368,6 +419,39 @@ export default function CandlestickChart() {
   useEffect(() => {
     tradeStageRef.current = tradeStage
   }, [tradeStage])
+
+  // Restaurar marcadores del gráfico tras cualquier carga (inicial o navegación a fecha)
+  useEffect(() => {
+    if (!loading && tradePositionsRef.current.length > 0) {
+      updateMarkers(tradePositionsRef.current)
+    }
+  }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restaurar posición del gráfico la primera vez que los datos iniciales están listos
+  useEffect(() => {
+    if (!initialLoadDone) return
+
+    try {
+      const stored = localStorage.getItem('bitcoin-trader-chart-position')
+      if (!stored) return
+
+      const { from, to, centerTime } = JSON.parse(stored)
+      const loadedData = loadedCandlesRef.current
+      if (loadedData.length === 0) return
+
+      const dataStart = loadedData[0].time as number
+
+      if (from >= dataStart) {
+        // La posición guardada está dentro del rango cargado: solo hacemos scroll
+        chartRef.current?.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
+      } else {
+        // La posición guardada es más antigua que los datos cargados: navegamos a esa fecha
+        navigateToDate(new Date(centerTime * 1000))
+      }
+    } catch {
+      // Si hay error leyendo la posición guardada, simplemente ignorar
+    }
+  }, [initialLoadDone]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMarkers = (positions: TradePosition[]) => {
     const markers: TradeMarker[] = []
@@ -505,6 +589,53 @@ export default function CandlestickChart() {
     setSelectedTradeIds(new Set())
   }
 
+  const navigateToDate = async (targetDate: Date) => {
+    if (!chartRef.current || !seriesRef.current) return
+
+    setLoading(true)
+    initialLoadCompleteRef.current = false
+
+    // endTime = target + 250 velas de 5min hacia adelante para que la fecha quede centrada
+    const targetMs = targetDate.getTime()
+    const endTimeMs = targetMs + 250 * 5 * 60 * 1000
+
+    try {
+      const data = await fetchCandlesWithCache('5m', 1000, endTimeMs)
+
+      if (data.length === 0) {
+        setLoading(false)
+        return
+      }
+
+      seriesRef.current.setData(data)
+      loadedCandlesRef.current = data
+      setLoadedCandles(data)
+
+      const firstCandleTime = data[0].time
+      oldestCandleTimeRef.current = typeof firstCandleTime === 'number' ? firstCandleTime : 0
+
+      const lastCandleTime = data[data.length - 1].time
+      newestCandleTimeRef.current = typeof lastCandleTime === 'number' ? lastCandleTime : 0
+
+      hasMoreHistoricalDataRef.current = true
+      setHasMoreHistoricalData(true)
+      hasMoreFutureDataRef.current = true
+
+      // Centrar la vista: 50 velas antes y 150 velas después del target
+      const targetUnix = Math.floor(targetMs / 1000)
+      chartRef.current.timeScale().setVisibleRange({
+        from: (targetUnix - 50 * 5 * 60) as Time,
+        to: (targetUnix + 150 * 5 * 60) as Time,
+      })
+
+      setLoading(false)
+      initialLoadCompleteRef.current = true
+    } catch (error) {
+      console.error('Error al navegar a la fecha:', error)
+      setLoading(false)
+    }
+  }
+
   const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
   const pnlBgColor = profitLoss >= 0 ? 'bg-green-500' : 'bg-red-500'
 
@@ -512,7 +643,7 @@ export default function CandlestickChart() {
     <div className="flex flex-col h-screen bg-gray-900 text-white">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold">Bitcoin Trader - 15m</h1>
+          <h1 className="text-xl font-bold">Bitcoin Trader - 5m</h1>
           <div className="flex gap-2">
             <button
               onClick={() => setNextTradeDirection('long')}
@@ -533,6 +664,26 @@ export default function CandlestickChart() {
               }`}
             >
               📉 SHORT
+            </button>
+          </div>
+          <div className="flex items-center gap-2 border-l border-gray-600 pl-4">
+            <span className="text-xs text-gray-400 whitespace-nowrap">Ir a fecha:</span>
+            <input
+              type="date"
+              value={dateInput}
+              onChange={(e) => setDateInput(e.target.value)}
+              max={new Date().toISOString().split('T')[0]}
+              className="bg-gray-700 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              onClick={() => {
+                if (!dateInput) return
+                navigateToDate(new Date(dateInput + 'T12:00:00'))
+              }}
+              disabled={!dateInput || loading}
+              className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded transition-colors whitespace-nowrap"
+            >
+              Ir →
             </button>
           </div>
         </div>
@@ -583,8 +734,13 @@ export default function CandlestickChart() {
             </div>
           )}
           {loadingMore && !loading && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-blue-600 px-4 py-2 rounded-full text-sm">
-              Cargando histórico anterior...
+            <div className="absolute top-4 left-4 bg-blue-600 px-4 py-2 rounded-full text-sm">
+              ← Cargando histórico anterior...
+            </div>
+          )}
+          {loadingMoreFuture && !loading && (
+            <div className="absolute top-4 right-4 bg-green-600 px-4 py-2 rounded-full text-sm">
+              Cargando datos siguientes... →
             </div>
           )}
         </div>
