@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { createChart, CandlestickSeries, ColorType, Time, CandlestickData, createSeriesMarkers, ISeriesMarkersPluginApi } from 'lightweight-charts'
 import { fetchBitcoinCandlesticks, fetchCandlesWithCache } from '../services/binance'
 
@@ -736,6 +737,17 @@ export default function CandlestickChart() {
                Resetear Todos
              </button>
            )}
+           <Link
+             href="/trades"
+             className="px-4 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors border border-gray-600 flex items-center gap-1"
+           >
+             📋 Ver operaciones
+             {tradePositions.length > 0 && (
+               <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full leading-none">
+                 {tradePositions.length}
+               </span>
+             )}
+           </Link>
          </div>
       </div>
 
