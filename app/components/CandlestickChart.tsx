@@ -90,6 +90,8 @@ export default function CandlestickChart() {
   const savedRulersRef = useRef<SavedRuler[]>([])
   const rulerDomRefs = useRef<Map<string, RulerDomEntry>>(new Map())
   const rulerRafId = useRef<number | null>(null)
+  const [plotInsets, setPlotInsets] = useState({ right: 65, bottom: 32 })
+  const plotInsetsRef = useRef({ right: 65, bottom: 32 })
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -174,6 +176,8 @@ export default function CandlestickChart() {
         initialLoadCompleteRef.current = true
         setInitialLoadDone(true)
         console.log('Initial load complete set to true')
+        // Update axis insets once chart has rendered with data
+        setTimeout(updatePlotInsets, 0)
       } catch (error) {
         console.error('Error loading data:', error)
         setLoading(false)
@@ -275,6 +279,7 @@ export default function CandlestickChart() {
       if (savedRulersRef.current.length > 0) {
         const ts = chart.timeScale()
         const containerW = chartContainerRef.current?.clientWidth ?? 900
+        const plotW = containerW - plotInsetsRef.current.right
         for (const ruler of savedRulersRef.current) {
           const entry = rulerDomRefs.current.get(ruler.id)
           if (!entry) continue
@@ -286,7 +291,7 @@ export default function CandlestickChart() {
           const rTop = Math.min(ay, ey)
           const rWidth = Math.abs(ex - ax)
           const rHeight = Math.abs(ey - ay)
-          const statsX = rLeft + rWidth + 6 > containerW - 180 ? rLeft - 178 : rLeft + rWidth + 6
+          const statsX = rLeft + rWidth + 6 > plotW - 180 ? rLeft - 178 : rLeft + rWidth + 6
           if (entry.rect) {
             entry.rect.style.left = `${rLeft}px`
             entry.rect.style.top = `${rTop}px`
@@ -334,12 +339,24 @@ export default function CandlestickChart() {
       }
     })
 
+    const updatePlotInsets = () => {
+      try {
+        const right = chart.priceScale('right').width()
+        const bottom = (chart.timeScale() as any).height?.() ?? 32
+        if (right > 0 && (right !== plotInsetsRef.current.right || bottom !== plotInsetsRef.current.bottom)) {
+          plotInsetsRef.current = { right, bottom }
+          setPlotInsets({ right, bottom })
+        }
+      } catch { /* ignore if API not available */ }
+    }
+
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({
           width: chartContainerRef.current.clientWidth,
           height: chartContainerRef.current.clientHeight,
         })
+        updatePlotInsets()
       }
     }
 
@@ -1004,7 +1021,7 @@ export default function CandlestickChart() {
               rulerDomRefs.current.set(ruler.id, { ...prev, [key]: el })
             }
             return (
-              <div key={ruler.id} className="absolute inset-0" style={{ zIndex: 4, pointerEvents: 'none' }}>
+              <div key={ruler.id} className="absolute overflow-hidden" style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 4, pointerEvents: 'none' }}>
                 {/* RAF sets left/top/width/height — initial values just need to exist */}
                 <div ref={setRef('rect')} className="absolute" style={{ border: `1.5px solid ${accentColor}`, background: fillColor }} />
                 <div ref={setRef('anchorDot')} className="absolute w-2 h-2 rounded-full border border-gray-900" style={{ background: accentColor }} />
@@ -1054,9 +1071,10 @@ export default function CandlestickChart() {
             const rWidth = rulerCurrent ? Math.abs(rulerCurrent.x - rulerAnchor.x) : 0
             const rHeight = rulerCurrent ? Math.abs(rulerCurrent.y - rulerAnchor.y) : 0
 
-            // Stats box: prefer right side of cursor, flip if near edge
+            // Stats box: prefer right side of cursor, flip if near edge (use plot width, not full container)
+            const plotWidth = (chartContainerRef.current?.clientWidth ?? 800) - plotInsets.right
             const boxX = rulerCurrent
-              ? (rulerCurrent.x > (chartContainerRef.current?.clientWidth ?? 800) - 190
+              ? (rulerCurrent.x > plotWidth - 190
                 ? rulerCurrent.x - 176
                 : rulerCurrent.x + 14)
               : rulerAnchor.x + 14
@@ -1067,7 +1085,7 @@ export default function CandlestickChart() {
               : rulerAnchor.y + 10
 
             return (
-              <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 5 }}>
+              <div className="absolute overflow-hidden pointer-events-none" style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 5 }}>
                 {/* Anchor dot */}
                 <div
                   className="absolute w-2.5 h-2.5 rounded-full border-2 border-gray-900"
