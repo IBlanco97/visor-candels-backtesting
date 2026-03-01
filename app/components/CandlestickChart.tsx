@@ -70,6 +70,8 @@ export default function CandlestickChart() {
   const [rulerAnchor, setRulerAnchor] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
   const [rulerCurrent, setRulerCurrent] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
   const rulerAnchorRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null)
+  const rulerAnchorLineRef = useRef<any>(null)
+  const rulerCurrentLineRef = useRef<any>(null)
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -304,6 +306,21 @@ export default function CandlestickChart() {
       const price = candlestickSeries.coordinateToPrice(y)
       if (time !== null && price !== null) {
         setRulerCurrent({ x, y, price, time: time as number })
+        // Update current price line on the axis
+        const isAbove = price >= rulerAnchorRef.current.price
+        const lineColor = isAbove ? 'rgba(34,171,148,0.9)' : 'rgba(247,82,95,0.9)'
+        if (rulerCurrentLineRef.current) {
+          rulerCurrentLineRef.current.applyOptions({ price, color: lineColor })
+        } else {
+          rulerCurrentLineRef.current = candlestickSeries.createPriceLine({
+            price,
+            color: lineColor,
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: '',
+          })
+        }
       }
     }
     chartEl.addEventListener('mousemove', handleRulerMove)
@@ -359,8 +376,23 @@ export default function CandlestickChart() {
           const anchor = { x, y, price, time: time as number }
           setRulerAnchor(anchor)
           rulerAnchorRef.current = anchor
+          // Pin anchor price on the axis (neutral cyan)
+          rulerAnchorLineRef.current = candlestickSeries.createPriceLine({
+            price,
+            color: 'rgba(100,200,255,0.85)',
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: '',
+          })
         } else {
           // Second click clears the ruler so user can start a new measurement
+          candlestickSeries.removePriceLine(rulerAnchorLineRef.current)
+          rulerAnchorLineRef.current = null
+          if (rulerCurrentLineRef.current) {
+            candlestickSeries.removePriceLine(rulerCurrentLineRef.current)
+            rulerCurrentLineRef.current = null
+          }
           setRulerAnchor(null)
           setRulerCurrent(null)
           rulerAnchorRef.current = null
@@ -464,6 +496,16 @@ export default function CandlestickChart() {
   useEffect(() => {
     rulerModeRef.current = rulerMode
     if (!rulerMode) {
+      if (seriesRef.current) {
+        if (rulerAnchorLineRef.current) {
+          seriesRef.current.removePriceLine(rulerAnchorLineRef.current)
+          rulerAnchorLineRef.current = null
+        }
+        if (rulerCurrentLineRef.current) {
+          seriesRef.current.removePriceLine(rulerCurrentLineRef.current)
+          rulerCurrentLineRef.current = null
+        }
+      }
       setRulerAnchor(null)
       setRulerCurrent(null)
       rulerAnchorRef.current = null
