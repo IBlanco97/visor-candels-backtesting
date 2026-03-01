@@ -982,7 +982,7 @@ export default function CandlestickChart() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 relative">
+        <div className="flex-1 relative overflow-hidden">
           <div
             ref={chartContainerRef}
             data-testid="chart-container"
