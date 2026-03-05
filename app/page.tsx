@@ -13,6 +13,13 @@ const CandlestickChart = dynamic(
   }
 )
 
+// const BotPanel = dynamic(() => import('./components/BotPanel'), { ssr: false })
+
 export default function Home() {
-  return <CandlestickChart />
+  return (
+    <>
+      <CandlestickChart />
+      {/* <BotPanel /> */}
+    </>
+  )
 }

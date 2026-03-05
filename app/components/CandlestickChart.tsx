@@ -12,12 +12,12 @@ interface SavedRuler {
   id: string
   anchorPrice: number
   anchorTime: number
-  endPrice: number
+  endPrice: number   // TP level
   endTime: number
-  direction?: 'long' | 'short'
+  slPrice?: number   // SL level (optional for backward compat — fallback: 2*anchor - endPrice)
 }
 
-type RulerDomEntry = { rect: HTMLDivElement | null; anchorDot: HTMLDivElement | null; endDot: HTMLDivElement | null; label: HTMLDivElement | null; deleteBtn: HTMLDivElement | null }
+type RulerDomEntry = { rect: HTMLDivElement | null; slRect: HTMLDivElement | null; anchorDot: HTMLDivElement | null; endDot: HTMLDivElement | null; label: HTMLDivElement | null; deleteBtn: HTMLDivElement | null }
 
 interface TradePosition {
   id: string
@@ -87,15 +87,16 @@ export default function CandlestickChart() {
   const [rulerMode, setRulerMode] = useState(false)
   const rulerModeRef = useRef(false)
   const [rulerAnchor, setRulerAnchor] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
-  const [rulerCurrent, setRulerCurrent] = useState<{ x: number; y: number; price: number; time: number } | null>(null)
+  const [rulerCurrent, setRulerCurrent] = useState<{ x: number; y: number; price: number; time: number; slPrice: number } | null>(null)
   const rulerAnchorRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null)
-  const rulerCurrentRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null)
+  const rulerCurrentRef = useRef<{ x: number; y: number; price: number; time: number; slPrice: number } | null>(null)
   const rulerAnchorLineRef = useRef<any>(null)
   const rulerCurrentLineRef = useRef<any>(null)
-  const rulerTpLineRef = useRef<any>(null)
-  const rulerSlLineRef = useRef<any>(null)
-  const [rulerDirection, setRulerDirection] = useState<'long' | 'short'>('long')
-  const rulerDirectionRef = useRef<'long' | 'short'>('long')
+  const [rulerPct, setRulerPct] = useState(1.0)
+  const rulerPctRef = useRef(1.0)
+  const [selectedRulerId, setSelectedRulerId] = useState<string | null>(null)
+  const selectedRulerIdRef = useRef<string | null>(null)
+  const selectedRulerLinesRef = useRef<{ entry: any; tp: any; sl: any } | null>(null)
   const draggingRulerRef = useRef<{ id: string; point: 'anchor' | 'end' } | null>(null)
   const [savedRulers, setSavedRulers] = useState<SavedRuler[]>(() => {
     if (typeof window === 'undefined') return []
@@ -287,37 +288,41 @@ export default function CandlestickChart() {
     const drawRulerPositions = () => {
       if (savedRulersRef.current.length > 0) {
         const ts = chart.timeScale()
-        const containerW = chartContainerRef.current?.clientWidth ?? 900
-        const plotW = containerW - plotInsetsRef.current.right
         for (const ruler of savedRulersRef.current) {
           const entry = rulerDomRefs.current.get(ruler.id)
           if (!entry) continue
           const ax = ts.timeToCoordinate(ruler.anchorTime as Time) ?? -9999
           const ay = candlestickSeries.priceToCoordinate(ruler.anchorPrice) ?? -9999
           const ex = ts.timeToCoordinate(ruler.endTime as Time) ?? -9999
-          const ey = candlestickSeries.priceToCoordinate(ruler.endPrice) ?? -9999
+          const tpY = candlestickSeries.priceToCoordinate(ruler.endPrice) ?? -9999
+          // slPrice: backward compat — if missing, mirror TP around anchor
+          const slPriceVal = ruler.slPrice ?? (2 * ruler.anchorPrice - ruler.endPrice)
+          const slY = candlestickSeries.priceToCoordinate(slPriceVal) ?? -9999
           const rLeft = Math.min(ax, ex)
-          const rTop = Math.min(ay, ey)
           const rWidth = Math.abs(ex - ax)
-          const rHeight = Math.abs(ey - ay)
+          // TP rect (green): between anchorPrice and endPrice
+          const tpTop = Math.min(ay, tpY)
+          const tpHeight = Math.abs(ay - tpY)
           if (entry.rect) {
-            entry.rect.style.left = `${rLeft}px`
-            entry.rect.style.top = `${rTop}px`
-            entry.rect.style.width = `${rWidth}px`
-            entry.rect.style.height = `${rHeight}px`
+            entry.rect.style.left = `${rLeft}px`; entry.rect.style.top = `${tpTop}px`
+            entry.rect.style.width = `${rWidth}px`; entry.rect.style.height = `${tpHeight}px`
           }
+          // SL rect (red): between anchorPrice and slPrice
+          const slTop = Math.min(ay, slY)
+          const slHeight = Math.abs(ay - slY)
+          if (entry.slRect) {
+            entry.slRect.style.left = `${rLeft}px`; entry.slRect.style.top = `${slTop}px`
+            entry.slRect.style.width = `${rWidth}px`; entry.slRect.style.height = `${slHeight}px`
+          }
+          // Dots at entry level (anchorPrice Y) — drag only moves time (X)
           if (entry.anchorDot) { entry.anchorDot.style.left = `${ax - 5}px`; entry.anchorDot.style.top = `${ay - 5}px` }
-          if (entry.endDot)    { entry.endDot.style.left    = `${ex - 5}px`; entry.endDot.style.top    = `${ey - 5}px` }
-          if (entry.deleteBtn) { entry.deleteBtn.style.left = `${ex + 4}px`;  entry.deleteBtn.style.top = `${ey - 8}px` }
+          if (entry.endDot)    { entry.endDot.style.left    = `${ex - 5}px`; entry.endDot.style.top    = `${ay - 5}px` }
+          if (entry.deleteBtn) { entry.deleteBtn.style.left = `${ex + 16}px`; entry.deleteBtn.style.top = `${ay - 8}px` }
           if (entry.label) {
-            const pct = ((ruler.endPrice - ruler.anchorPrice) / ruler.anchorPrice) * 100
-            const isUp = ruler.endPrice >= ruler.anchorPrice
-            const isGain = ruler.direction === 'long' ? isUp : (ruler.direction === 'short' ? !isUp : isUp)
-            entry.label.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
-            entry.label.style.color = isGain ? '#22ab94' : '#f7525f'
-            const labelX = rLeft + rWidth / 2 - 20
-            entry.label.style.left = `${labelX}px`
-            entry.label.style.top = `${rTop + rHeight / 2 - 8}px`
+            const pct = Math.abs((ruler.endPrice - ruler.anchorPrice) / ruler.anchorPrice) * 100
+            entry.label.textContent = `+${pct.toFixed(2)}%`
+            entry.label.style.left = `${rLeft + rWidth / 2 - 18}px`
+            entry.label.style.top = `${tpTop + tpHeight / 2 - 8}px`
           }
         }
       }
@@ -381,24 +386,23 @@ export default function CandlestickChart() {
     window.addEventListener('resize', handleResize)
     handleResize()
 
-    // Ruler tool: mouse move listener to track current position and handle drag editing
+    // Ruler tool: mouse move listener — Y determines direction (above=long, below=short), X sets time
     const chartEl = chartContainerRef.current!
     const handleRulerMove = (e: MouseEvent) => {
       const rect = chartEl.getBoundingClientRect()
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
 
-      // Handle dragging a saved ruler dot
+      // Drag editing: only update time (X), prices stay fixed
       if (draggingRulerRef.current) {
         const time = timeScale.coordinateToTime(x)
-        const price = candlestickSeries.coordinateToPrice(y)
-        if (time !== null && price !== null) {
+        if (time !== null) {
           const { id, point } = draggingRulerRef.current
           const rulerIdx = savedRulersRef.current.findIndex(r => r.id === id)
           if (rulerIdx >= 0) {
             const updated = { ...savedRulersRef.current[rulerIdx] }
-            if (point === 'anchor') { updated.anchorPrice = price; updated.anchorTime = time as number }
-            else { updated.endPrice = price; updated.endTime = time as number }
+            if (point === 'anchor') updated.anchorTime = time as number
+            else updated.endTime = time as number
             savedRulersRef.current = savedRulersRef.current.map((r, i) => i === rulerIdx ? updated : r)
           }
         }
@@ -407,31 +411,31 @@ export default function CandlestickChart() {
 
       if (!rulerModeRef.current || !rulerAnchorRef.current) return
       const time = timeScale.coordinateToTime(x)
-      const price = candlestickSeries.coordinateToPrice(y)
-      if (time !== null && price !== null) {
-        const cur = { x, y, price, time: time as number }
+      const mousePrice = candlestickSeries.coordinateToPrice(y)
+      if (time !== null && mousePrice !== null) {
+        const anchorPrice = rulerAnchorRef.current.price
+        const pct = rulerPctRef.current
+        // Direction derived from mouse position: above anchor = long, below = short
+        const dir = mousePrice >= anchorPrice ? 'long' : 'short'
+        const endPrice = dir === 'long' ? anchorPrice * (1 + pct / 100) : anchorPrice * (1 - pct / 100)
+        const slPrice  = dir === 'long' ? anchorPrice * (1 - pct / 100) : anchorPrice * (1 + pct / 100)
+        const endY = candlestickSeries.priceToCoordinate(endPrice) ?? rulerAnchorRef.current.y
+        const cur = { x, y: endY as number, price: endPrice, time: time as number, slPrice }
         setRulerCurrent(cur)
         rulerCurrentRef.current = cur
-        // Update current price line on the axis — color follows direction
-        const dir = rulerDirectionRef.current
-        const isAbove = price >= rulerAnchorRef.current.price
-        const isProfitable = dir === 'long' ? isAbove : !isAbove
-        const lineColor = isProfitable ? 'rgba(34,171,148,0.9)' : 'rgba(247,82,95,0.9)'
+        // Axis label at TP price
+        const tpColor = 'rgba(34,171,148,0.9)'
         if (rulerCurrentLineRef.current) {
-          rulerCurrentLineRef.current.applyOptions({ price, color: lineColor })
+          rulerCurrentLineRef.current.applyOptions({ price: endPrice, color: tpColor })
         } else {
           rulerCurrentLineRef.current = candlestickSeries.createPriceLine({
-            price,
-            color: lineColor,
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: '',
+            price: endPrice, color: tpColor, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '',
           })
         }
       }
     }
-    chartEl.addEventListener('mousemove', handleRulerMove)
+    // Use window (not chartEl) so drag works even when mouse passes over pointer-events:auto ruler rects
+    window.addEventListener('mousemove', handleRulerMove)
 
     const handleMouseUp = () => {
       if (draggingRulerRef.current) {
@@ -467,7 +471,7 @@ export default function CandlestickChart() {
       loadedCandlesRef.current = []
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('mouseup', handleMouseUp)
-      chartEl.removeEventListener('mousemove', handleRulerMove)
+      window.removeEventListener('mousemove', handleRulerMove)
       if (rulerRafId.current) cancelAnimationFrame(rulerRafId.current)
       markersPluginRef.current?.detach()
       chart.remove()
@@ -505,26 +509,6 @@ export default function CandlestickChart() {
             axisLabelVisible: true,
             title: '',
           })
-          // Fixed ±1% reference lines
-          const dir = rulerDirectionRef.current
-          const tpColor = dir === 'long' ? 'rgba(34,171,148,0.85)' : 'rgba(247,82,95,0.85)'
-          const slColor = dir === 'long' ? 'rgba(247,82,95,0.85)' : 'rgba(34,171,148,0.85)'
-          rulerTpLineRef.current = candlestickSeries.createPriceLine({
-            price: price * 1.01,
-            color: tpColor,
-            lineWidth: 1,
-            lineStyle: 3,
-            axisLabelVisible: true,
-            title: dir === 'long' ? '+1% TP' : '+1% SL',
-          })
-          rulerSlLineRef.current = candlestickSeries.createPriceLine({
-            price: price * 0.99,
-            color: slColor,
-            lineWidth: 1,
-            lineStyle: 3,
-            axisLabelVisible: true,
-            title: dir === 'long' ? '-1% SL' : '-1% TP',
-          })
         } else {
           // Second click: save the ruler and clear active state for a new measurement
           if (rulerCurrentRef.current) {
@@ -534,7 +518,7 @@ export default function CandlestickChart() {
               anchorTime: rulerAnchorRef.current.time,
               endPrice: rulerCurrentRef.current.price,
               endTime: rulerCurrentRef.current.time,
-              direction: rulerDirectionRef.current,
+              slPrice: rulerCurrentRef.current.slPrice,
             }
             setSavedRulers(prev => [...prev, newRuler])
           }
@@ -546,14 +530,6 @@ export default function CandlestickChart() {
           if (rulerCurrentLineRef.current) {
             candlestickSeries.removePriceLine(rulerCurrentLineRef.current)
             rulerCurrentLineRef.current = null
-          }
-          if (rulerTpLineRef.current) {
-            candlestickSeries.removePriceLine(rulerTpLineRef.current)
-            rulerTpLineRef.current = null
-          }
-          if (rulerSlLineRef.current) {
-            candlestickSeries.removePriceLine(rulerSlLineRef.current)
-            rulerSlLineRef.current = null
           }
           setRulerAnchor(null)
           setRulerCurrent(null)
@@ -668,14 +644,6 @@ export default function CandlestickChart() {
           seriesRef.current.removePriceLine(rulerCurrentLineRef.current)
           rulerCurrentLineRef.current = null
         }
-        if (rulerTpLineRef.current) {
-          seriesRef.current.removePriceLine(rulerTpLineRef.current)
-          rulerTpLineRef.current = null
-        }
-        if (rulerSlLineRef.current) {
-          seriesRef.current.removePriceLine(rulerSlLineRef.current)
-          rulerSlLineRef.current = null
-        }
       }
       setRulerAnchor(null)
       setRulerCurrent(null)
@@ -683,9 +651,8 @@ export default function CandlestickChart() {
     }
   }, [rulerMode])
 
-  useEffect(() => {
-    rulerDirectionRef.current = rulerDirection
-  }, [rulerDirection])
+  useEffect(() => { rulerPctRef.current = rulerPct }, [rulerPct])
+  useEffect(() => { selectedRulerIdRef.current = selectedRulerId }, [selectedRulerId])
 
   useEffect(() => {
     rulerAnchorRef.current = rulerAnchor
@@ -698,7 +665,18 @@ export default function CandlestickChart() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && rulerModeRef.current) setRulerMode(false)
+      if (e.key === 'Escape') {
+        if (rulerModeRef.current) setRulerMode(false)
+        else if (selectedRulerIdRef.current) {
+          if (selectedRulerLinesRef.current && seriesRef.current) {
+            seriesRef.current.removePriceLine(selectedRulerLinesRef.current.entry)
+            seriesRef.current.removePriceLine(selectedRulerLinesRef.current.tp)
+            seriesRef.current.removePriceLine(selectedRulerLinesRef.current.sl)
+            selectedRulerLinesRef.current = null
+          }
+          setSelectedRulerId(null)
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -963,11 +941,38 @@ export default function CandlestickChart() {
     }
   }
 
+  const clearSelectedRulerLines = () => {
+    if (selectedRulerLinesRef.current && seriesRef.current) {
+      seriesRef.current.removePriceLine(selectedRulerLinesRef.current.entry)
+      seriesRef.current.removePriceLine(selectedRulerLinesRef.current.tp)
+      seriesRef.current.removePriceLine(selectedRulerLinesRef.current.sl)
+      selectedRulerLinesRef.current = null
+    }
+    setSelectedRulerId(null)
+    selectedRulerIdRef.current = null
+  }
+
+  const selectRuler = (ruler: SavedRuler) => {
+    if (!seriesRef.current) return
+    // Toggle: clicking the same ruler deselects
+    if (selectedRulerIdRef.current === ruler.id) { clearSelectedRulerLines(); return }
+    clearSelectedRulerLines()
+    const slPriceVal = ruler.slPrice ?? (2 * ruler.anchorPrice - ruler.endPrice)
+    const entry = seriesRef.current.createPriceLine({ price: ruler.anchorPrice, color: 'rgba(100,200,255,0.9)', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'Entrada' })
+    const tp    = seriesRef.current.createPriceLine({ price: ruler.endPrice,   color: 'rgba(34,171,148,0.9)',  lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: 'TP' })
+    const sl    = seriesRef.current.createPriceLine({ price: slPriceVal,        color: 'rgba(247,82,95,0.9)',   lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: 'SL' })
+    selectedRulerLinesRef.current = { entry, tp, sl }
+    setSelectedRulerId(ruler.id)
+    selectedRulerIdRef.current = ruler.id
+  }
+
   const deleteRuler = (id: string) => {
+    if (selectedRulerIdRef.current === id) clearSelectedRulerLines()
     setSavedRulers(prev => prev.filter(r => r.id !== id))
     rulerDomRefs.current.delete(id)
   }
   const deleteAllRulers = () => {
+    clearSelectedRulerLines()
     setSavedRulers([])
     rulerDomRefs.current.clear()
   }
@@ -1052,20 +1057,17 @@ export default function CandlestickChart() {
                   </span>
                 )}
               </button>
-              <button
-                onClick={() => setRulerDirection('long')}
-                className={`px-2 py-1 text-xs rounded font-semibold transition-colors ${
-                  rulerDirection === 'long' ? 'bg-emerald-600 text-white ring-1 ring-emerald-400' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                }`}
-                title="Regla Long: +1% verde, -1% rojo"
-              >L</button>
-              <button
-                onClick={() => setRulerDirection('short')}
-                className={`px-2 py-1 text-xs rounded font-semibold transition-colors ${
-                  rulerDirection === 'short' ? 'bg-red-600 text-white ring-1 ring-red-400' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                }`}
-                title="Regla Short: -1% verde, +1% rojo"
-              >S</button>
+              <input
+                type="number"
+                min="0.1"
+                max="20"
+                step="0.1"
+                value={rulerPct}
+                onChange={e => setRulerPct(Math.max(0.1, parseFloat(e.target.value) || 1))}
+                className="w-14 bg-gray-700 text-white text-xs px-1.5 py-1 rounded border border-gray-600 focus:outline-none focus:border-cyan-500 text-center"
+                title="% de la regla"
+              />
+              <span className="text-xs text-gray-400">%</span>
             </div>
             {savedRulers.length > 0 && (
               <button
@@ -1156,40 +1158,48 @@ export default function CandlestickChart() {
 
           {/* Saved rulers — positions updated at 60fps via RAF (no React re-renders during scroll) */}
           {savedRulers.map(ruler => {
-            const priceDiff = ruler.endPrice - ruler.anchorPrice
-            const isUp = priceDiff >= 0
-            const isGain = ruler.direction === 'long' ? isUp : (ruler.direction === 'short' ? !isUp : isUp)
-            const accentColor = isGain ? '#22ab94' : '#f7525f'
-            const fillColor = isGain ? 'rgba(34,171,148,0.07)' : 'rgba(247,82,95,0.07)'
+            const isSelected = selectedRulerId === ruler.id
             const setRef = (key: keyof RulerDomEntry) => (el: HTMLDivElement | null) => {
-              const prev = rulerDomRefs.current.get(ruler.id) ?? { rect: null, anchorDot: null, endDot: null, label: null, deleteBtn: null }
+              const prev = rulerDomRefs.current.get(ruler.id) ?? { rect: null, slRect: null, anchorDot: null, endDot: null, label: null, deleteBtn: null }
               rulerDomRefs.current.set(ruler.id, { ...prev, [key]: el })
             }
             return (
               <div key={ruler.id} className="absolute" style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 4, pointerEvents: 'none' }}>
-                {/* RAF sets left/top/width/height */}
-                <div ref={setRef('rect')} className="absolute" style={{ border: `1.5px solid ${accentColor}`, background: fillColor }} />
-                {/* % label — no box, centered on rect, no pointer-events */}
+                {/* TP rect — green; pointer-events-auto so user can click to select */}
+                <div
+                  ref={setRef('rect')}
+                  className="absolute cursor-pointer"
+                  style={{ border: `1.5px solid ${isSelected ? '#22ab94' : 'rgba(34,171,148,0.7)'}`, background: 'rgba(34,171,148,0.08)', pointerEvents: 'auto' }}
+                  onClick={e => { e.stopPropagation(); selectRuler(ruler) }}
+                />
+                {/* SL rect — red; pointer-events-auto */}
+                <div
+                  ref={setRef('slRect')}
+                  className="absolute cursor-pointer"
+                  style={{ border: `1.5px solid ${isSelected ? '#f7525f' : 'rgba(247,82,95,0.7)'}`, background: 'rgba(247,82,95,0.08)', pointerEvents: 'auto' }}
+                  onClick={e => { e.stopPropagation(); selectRuler(ruler) }}
+                />
+                {/* % label — no box, centered on TP rect, no pointer-events */}
                 <div
                   ref={setRef('label')}
                   className="absolute text-xs font-bold font-mono pointer-events-none select-none"
-                  style={{ textShadow: '0 0 4px #000, 0 0 4px #000, 0 0 4px #000', zIndex: 10 }}
+                  style={{ color: '#22ab94', textShadow: '0 0 4px #000, 0 0 4px #000, 0 0 4px #000', zIndex: 10 }}
                 />
-                {/* Draggable anchor dot */}
+                {/* Draggable anchor dot — at entry level */}
                 <div
                   ref={setRef('anchorDot')}
                   className="absolute w-2.5 h-2.5 rounded-full border border-gray-900"
-                  style={{ background: accentColor, pointerEvents: 'auto', cursor: 'grab', zIndex: 11 }}
+                  style={{ background: '#64c8ff', pointerEvents: 'auto', cursor: 'ew-resize', zIndex: 11 }}
                   onMouseDown={e => { e.preventDefault(); e.stopPropagation(); draggingRulerRef.current = { id: ruler.id, point: 'anchor' } }}
                 />
-                {/* Draggable end dot */}
+                {/* Draggable end dot — at entry level */}
                 <div
                   ref={setRef('endDot')}
                   className="absolute w-2.5 h-2.5 rounded-full border border-gray-900"
-                  style={{ background: accentColor, pointerEvents: 'auto', cursor: 'grab', zIndex: 11 }}
+                  style={{ background: '#64c8ff', pointerEvents: 'auto', cursor: 'ew-resize', zIndex: 11 }}
                   onMouseDown={e => { e.preventDefault(); e.stopPropagation(); draggingRulerRef.current = { id: ruler.id, point: 'end' } }}
                 />
-                {/* Small delete button positioned next to end dot */}
+                {/* Small delete button next to end dot */}
                 <div
                   ref={setRef('deleteBtn')}
                   className="absolute text-gray-500 hover:text-red-400 transition-colors cursor-pointer select-none"
@@ -1201,62 +1211,47 @@ export default function CandlestickChart() {
             )
           })}
 
-          {/* Active ruler overlay — rendered above the chart canvas, pointer-events disabled */}
+          {/* Active ruler overlay — pointer-events disabled, direction auto from mouse position */}
           {rulerMode && rulerAnchor && (() => {
-            const priceDiff = rulerCurrent ? rulerCurrent.price - rulerAnchor.price : 0
-            const pricePct = rulerAnchor.price !== 0 ? (priceDiff / rulerAnchor.price) * 100 : 0
-            const isUp = priceDiff >= 0
-            const isProfitable = rulerDirection === 'long' ? isUp : !isUp
-            const accentColor = isProfitable ? '#22ab94' : '#f7525f'
-            const fillColor = isProfitable ? 'rgba(34,171,148,0.08)' : 'rgba(247,82,95,0.08)'
+            const anchorY = rulerAnchor.y
+            const rLeft   = rulerCurrent ? Math.min(rulerAnchor.x, rulerCurrent.x) : rulerAnchor.x
+            const rWidth  = rulerCurrent ? Math.abs(rulerCurrent.x - rulerAnchor.x) : 0
+            const pct = rulerPct
 
-            const rLeft = rulerCurrent ? Math.min(rulerAnchor.x, rulerCurrent.x) : rulerAnchor.x
-            const rTop = rulerCurrent ? Math.min(rulerAnchor.y, rulerCurrent.y) : rulerAnchor.y
-            const rWidth = rulerCurrent ? Math.abs(rulerCurrent.x - rulerAnchor.x) : 0
-            const rHeight = rulerCurrent ? Math.abs(rulerCurrent.y - rulerAnchor.y) : 0
+            // TP rect (always green — rulerCurrent.y = endPrice coordinate)
+            const tpY     = rulerCurrent ? rulerCurrent.y : anchorY
+            const tpTop   = Math.min(anchorY, tpY)
+            const tpHeight = Math.abs(anchorY - tpY)
+
+            // SL rect (always red — opposite side)
+            const slPriceVal = rulerCurrent?.slPrice
+            const slY = slPriceVal !== undefined
+              ? (seriesRef.current?.priceToCoordinate(slPriceVal) ?? anchorY)
+              : anchorY
+            const slTop    = Math.min(anchorY, slY)
+            const slHeight = Math.abs(anchorY - slY)
 
             return (
               <div className="absolute pointer-events-none" style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 5 }}>
-                {/* Anchor dot */}
+                {/* Anchor dot at entry price */}
                 <div
                   className="absolute w-2.5 h-2.5 rounded-full border-2 border-gray-900"
-                  style={{ left: rulerAnchor.x - 5, top: rulerAnchor.y - 5, background: accentColor }}
+                  style={{ left: rulerAnchor.x - 5, top: anchorY - 5, background: '#64c8ff' }}
                 />
 
                 {rulerCurrent && (
                   <>
-                    {/* Measurement rectangle */}
+                    {/* TP rect — green */}
+                    <div className="absolute" style={{ left: rLeft, top: tpTop, width: rWidth, height: tpHeight, border: '1.5px solid rgba(34,171,148,0.9)', background: 'rgba(34,171,148,0.09)' }} />
+                    {/* SL rect — red */}
+                    <div className="absolute" style={{ left: rLeft, top: slTop, width: rWidth, height: slHeight, border: '1.5px solid rgba(247,82,95,0.9)', background: 'rgba(247,82,95,0.09)' }} />
+                    {/* End dot at entry level */}
+                    <div className="absolute w-2.5 h-2.5 rounded-full border-2 border-gray-900" style={{ left: rulerCurrent.x - 5, top: anchorY - 5, background: '#64c8ff' }} />
+                    {/* % label centered on TP rect */}
                     <div
-                      className="absolute"
-                      style={{
-                        left: rLeft,
-                        top: rTop,
-                        width: rWidth,
-                        height: rHeight,
-                        border: `1.5px solid ${accentColor}`,
-                        background: fillColor,
-                      }}
-                    />
-
-                    {/* Current point dot */}
-                    <div
-                      className="absolute w-2.5 h-2.5 rounded-full border-2 border-gray-900"
-                      style={{ left: rulerCurrent.x - 5, top: rulerCurrent.y - 5, background: accentColor }}
-                    />
-
-                    {/* Minimal % label — centered on rect, no box */}
-                    <div
-                      className="absolute text-xs font-bold font-mono pointer-events-none select-none"
-                      style={{
-                        left: rLeft + rWidth / 2 - 20,
-                        top: rTop + rHeight / 2 - 8,
-                        color: accentColor,
-                        textShadow: '0 0 4px #000, 0 0 4px #000, 0 0 4px #000',
-                        zIndex: 10,
-                      }}
-                    >
-                      {pricePct >= 0 ? '+' : ''}{pricePct.toFixed(2)}%
-                    </div>
+                      className="absolute text-xs font-bold font-mono select-none"
+                      style={{ left: rLeft + rWidth / 2 - 18, top: tpTop + tpHeight / 2 - 8, color: '#22ab94', textShadow: '0 0 4px #000, 0 0 4px #000, 0 0 4px #000', zIndex: 10 }}
+                    >+{pct.toFixed(2)}%</div>
                   </>
                 )}
 
