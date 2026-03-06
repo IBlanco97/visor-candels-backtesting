@@ -22,6 +22,7 @@ export interface BacktestConfig {
   tpPct: number               // e.g. 1.0 for 1%
   slPct: number               // e.g. 1.0 for 1%
   initialDirection: BacktestDirection
+  triggerPrice?: number        // optional: wait until this price is touched before opening first trade
 }
 
 export interface EquityPoint {
@@ -126,10 +127,32 @@ export function runBacktest(
 
   const trades: BacktestTrade[] = []
   let direction: BacktestDirection = initialDirection
+
+  // Determine actual entry: either the open of the start candle, or wait for triggerPrice
   let entryPrice = candles[startIdx].open
   let entryTime = candles[startIdx].time as number
-  // Start scanning from the entry candle itself (open is the entry price)
   let scanFrom = startIdx
+
+  if (config.triggerPrice !== undefined && config.triggerPrice > 0) {
+    // Scan forward from startIdx until the trigger price is touched
+    let found = false
+    for (let i = startIdx; i < candles.length; i++) {
+      if (candles[i].high >= config.triggerPrice || candles[i].low <= config.triggerPrice) {
+        entryPrice = config.triggerPrice
+        entryTime = candles[i].time as number
+        scanFrom = i + 1
+        found = true
+        break
+      }
+    }
+    if (!found) {
+      return { trades: [], totalPnlPct: 0, winCount: 0, lossCount: 0, winRate: 0, maxDrawdown: 0, maxRunup: 0, equityCurve: [] }
+    }
+  } else {
+    entryPrice = candles[startIdx].open
+    entryTime = candles[startIdx].time as number
+    scanFrom = startIdx
+  }
 
   while (scanFrom < candles.length) {
     const tpPrice =

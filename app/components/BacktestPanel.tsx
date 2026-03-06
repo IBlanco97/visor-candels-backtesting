@@ -22,6 +22,8 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
 
   // Config inputs
   const [startDate, setStartDate] = useState('')
+  const [startTime, setStartTime] = useState('00:00')
+  const [triggerPrice, setTriggerPrice] = useState('')
   const [tpPct, setTpPct] = useState(1.0)
   const [slPct, setSlPct] = useState(1.0)
   const [initialDirection, setInitialDirection] = useState<BacktestDirection>('long')
@@ -37,7 +39,7 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
 
   const handleSimulate = useCallback(async () => {
     if (!startDate) { setError('Selecciona una fecha de inicio'); return }
-    const startMs = new Date(startDate + 'T00:00:00').getTime()
+    const startMs = new Date(startDate + 'T' + startTime + ':00').getTime()
     if (isNaN(startMs)) { setError('Fecha inválida'); return }
 
     const nowMs = Date.now()
@@ -68,11 +70,13 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
         return
       }
 
+      const parsedTrigger = parseFloat(triggerPrice)
       const config: BacktestConfig = {
         startTime: startTimeSec,
         tpPct,
         slPct,
         initialDirection,
+        ...(triggerPrice !== '' && !isNaN(parsedTrigger) && parsedTrigger > 0 ? { triggerPrice: parsedTrigger } : {}),
       }
 
       const result = runBacktest(candles, config)
@@ -122,17 +126,45 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
 
       {!collapsed && (
         <div className="p-3 flex flex-col gap-2.5">
-          {/* Start date */}
+          {/* Start date + time */}
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Fecha inicio</label>
+            <label className="text-xs text-gray-400 block mb-1">Fecha y hora inicio</label>
+            <div className="flex gap-1.5">
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                max={new Date().toISOString().split('T')[0]}
+                disabled={running}
+                className="flex-1 bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+              />
+              <input
+                type="time"
+                value={startTime}
+                onChange={e => setStartTime(e.target.value)}
+                disabled={running}
+                className="w-20 bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          {/* Trigger price (optional) */}
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">
+              Precio de entrada
+              <span className="text-gray-600 ml-1">(opcional)</span>
+            </label>
             <input
-              type="date"
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              max={new Date().toISOString().split('T')[0]}
+              type="number"
+              min={0}
+              step={0.01}
+              value={triggerPrice}
+              onChange={e => setTriggerPrice(e.target.value)}
               disabled={running}
-              className="w-full bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+              placeholder="p.ej. 65000"
+              className="w-full bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50 placeholder-gray-600"
             />
+            <p className="text-gray-600 text-xs mt-0.5">Espera hasta que el precio sea tocado</p>
           </div>
 
           {/* TP / SL */}
