@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createChart, CandlestickSeries, ColorType, Time, CandlestickData, createSeriesMarkers, ISeriesMarkersPluginApi } from 'lightweight-charts'
 import { fetchBitcoinCandlesticks, fetchCandlesWithCache } from '../services/binance'
+import { BacktestTrade, BacktestSummary } from '../services/backtestEngine'
+import BacktestPanel from './BacktestPanel'
 
 type TradeStage = 'idle' | 'waiting_entry' | 'entry_placed'
 type TradeDirection = 'long' | 'short'
@@ -107,6 +109,19 @@ export default function CandlestickChart() {
   const rulerRafId = useRef<number | null>(null)
   const [plotInsets, setPlotInsets] = useState({ right: 65, bottom: 32 })
   const plotInsetsRef = useRef({ right: 65, bottom: 32 })
+
+  const [backtestTrades, setBacktestTrades] = useState<BacktestTrade[]>(() => {
+    if (typeof window === 'undefined') return []
+    try { return JSON.parse(localStorage.getItem('bitcoin-trader-backtest-trades') || '[]') } catch { return [] }
+  })
+  const backtestTradesRef = useRef<BacktestTrade[]>([])
+
+  // Backtest rulers: all computed rulers and the visible subset rendered in DOM
+  const backtestRulersAllRef = useRef<SavedRuler[]>([])
+  const [visibleBacktestRulers, setVisibleBacktestRulers] = useState<SavedRuler[]>([])
+  const visibleBacktestRulersRef = useRef<SavedRuler[]>([])
+  const backtestRulerDomRefs = useRef<Map<string, { tp: HTMLDivElement | null; sl: HTMLDivElement | null }>>(new Map())
+  const updateVisibleBacktestRulersRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     // Verificar que estamos en el navegador (no en SSR)
@@ -326,9 +341,48 @@ export default function CandlestickChart() {
           }
         }
       }
+      // Backtest rulers (read-only, no dots/label/delete)
+      if (visibleBacktestRulersRef.current.length > 0) {
+        const ts = chart.timeScale()
+        for (const ruler of visibleBacktestRulersRef.current) {
+        const entry = backtestRulerDomRefs.current.get(ruler.id)
+        if (!entry) continue
+        const ax = ts.timeToCoordinate(ruler.anchorTime as Time) ?? -9999
+        const ay = candlestickSeries.priceToCoordinate(ruler.anchorPrice) ?? -9999
+        const ex = ts.timeToCoordinate(ruler.endTime as Time) ?? -9999
+        const tpY = candlestickSeries.priceToCoordinate(ruler.endPrice) ?? -9999
+        const slPriceVal = ruler.slPrice ?? (2 * ruler.anchorPrice - ruler.endPrice)
+        const slY = candlestickSeries.priceToCoordinate(slPriceVal) ?? -9999
+        const rLeft = Math.min(ax, ex)
+        const rWidth = Math.abs(ex - ax)
+        if (entry.tp) {
+          entry.tp.style.left = `${rLeft}px`; entry.tp.style.top = `${Math.min(ay, tpY)}px`
+          entry.tp.style.width = `${rWidth}px`; entry.tp.style.height = `${Math.abs(ay - tpY)}px`
+        }
+        if (entry.sl) {
+          entry.sl.style.left = `${rLeft}px`; entry.sl.style.top = `${Math.min(ay, slY)}px`
+          entry.sl.style.width = `${rWidth}px`; entry.sl.style.height = `${Math.abs(ay - slY)}px`
+        }
+        }
+      }
       rulerRafId.current = requestAnimationFrame(drawRulerPositions)
     }
     rulerRafId.current = requestAnimationFrame(drawRulerPositions)
+
+    // Register visible-backtest-rulers updater so handleBacktestResult can call it
+    updateVisibleBacktestRulersRef.current = () => {
+      const tr = chart.timeScale().getVisibleRange()
+      if (!tr || backtestRulersAllRef.current.length === 0) {
+        setVisibleBacktestRulers([])
+        return
+      }
+      const bufferSec = 60 * 300 // 60-candle look-ahead buffer
+      const from = (tr.from as number) - bufferSec
+      const to = (tr.to as number) + bufferSec
+      setVisibleBacktestRulers(
+        backtestRulersAllRef.current.filter(r => r.endTime >= from && r.anchorTime <= to)
+      )
+    }
 
     const timeScale = chart.timeScale()
     timeScale.subscribeVisibleLogicalRangeChange((range: any) => {
@@ -358,6 +412,9 @@ export default function CandlestickChart() {
             }))
           }
         }, 500)
+
+        // Update visible backtest rulers on viewport change
+        updateVisibleBacktestRulersRef.current?.()
 
       }
     })
@@ -570,7 +627,7 @@ export default function CandlestickChart() {
         setTradeStage('entry_placed')
         setProfitLoss(0)
 
-        updateMarkers([...tradePositions, newPosition], botTradePositionsRef.current)
+        updateMarkers([...tradePositions, newPosition], botTradePositionsRef.current, backtestTradesRef.current)
       } else if (tradeStage === 'entry_placed' && activeTradeId) {
         const updatedPositions = tradePositions.map(t => {
           if (t.id === activeTradeId) {
@@ -597,7 +654,7 @@ export default function CandlestickChart() {
 
           const updatedTrade = { ...activeTrade, exitPrice: clickedPrice, exitTime: clickedTime }
           const positionsWithExit = tradePositions.map(t => t.id === activeTradeId ? updatedTrade : t)
-          updateMarkers(positionsWithExit, botTradePositionsRef.current)
+          updateMarkers(positionsWithExit, botTradePositionsRef.current, backtestTradesRef.current)
         }
         setTradePositions(updatedPositions)
         setTradeStage('idle')
@@ -664,6 +721,14 @@ export default function CandlestickChart() {
   }, [savedRulers])
 
   useEffect(() => {
+    backtestTradesRef.current = backtestTrades
+    localStorage.setItem('bitcoin-trader-backtest-trades', JSON.stringify(backtestTrades))
+    updateMarkers(tradePositionsRef.current, botTradePositionsRef.current, backtestTrades)
+  }, [backtestTrades]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { visibleBacktestRulersRef.current = visibleBacktestRulers }, [visibleBacktestRulers])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (rulerModeRef.current) setRulerMode(false)
@@ -694,7 +759,7 @@ export default function CandlestickChart() {
         const parsed: TradePosition[] = e.newValue ? JSON.parse(e.newValue) : []
         setBotTradePositions(parsed)
         botTradePositionsRef.current = parsed
-        updateMarkers(tradePositionsRef.current, parsed)
+        updateMarkers(tradePositionsRef.current, parsed, backtestTradesRef.current)
       } catch { /* ignore */ }
     }
     window.addEventListener('storage', onStorage)
@@ -704,7 +769,7 @@ export default function CandlestickChart() {
   // Restaurar marcadores del gráfico tras cualquier carga (inicial o navegación a fecha)
   useEffect(() => {
     if (!loading && tradePositionsRef.current.length > 0) {
-      updateMarkers(tradePositionsRef.current, botTradePositionsRef.current)
+      updateMarkers(tradePositionsRef.current, botTradePositionsRef.current, backtestTradesRef.current)
     }
   }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -734,7 +799,7 @@ export default function CandlestickChart() {
     }
   }, [initialLoadDone]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const updateMarkers = (positions: TradePosition[], botPositions: TradePosition[] = []) => {
+  const updateMarkers = (positions: TradePosition[], botPositions: TradePosition[] = [], btTrades: BacktestTrade[] = []) => {
     const markers: TradeMarker[] = []
 
     positions.forEach(trade => {
@@ -793,6 +858,27 @@ export default function CandlestickChart() {
       }
     })
 
+    // Backtest markers: orange for long entries, sky-blue for short entries
+    btTrades.forEach(trade => {
+      const isLong = trade.direction === 'long'
+      const entryColor = isLong ? '#f97316' : '#38bdf8'
+      const exitColor = trade.result === 'tp' ? '#22ab94' : '#f7525f'
+      markers.push({
+        time: trade.entryTime as Time,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        color: entryColor,
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        text: isLong ? 'BT LONG' : 'BT SHORT',
+      })
+      markers.push({
+        time: trade.exitTime as Time,
+        position: 'aboveBar',
+        color: exitColor,
+        shape: trade.result === 'tp' ? 'arrowUp' : 'arrowDown',
+        text: `BT ${trade.result.toUpperCase()} (${trade.pnlPct >= 0 ? '+' : ''}${trade.pnlPct.toFixed(2)}%)`,
+      })
+    })
+
     markersPluginRef.current?.setMarkers(markers)
   }
 
@@ -840,7 +926,7 @@ export default function CandlestickChart() {
     setTradePositions(newPositions)
 
     // Actualizar marcadores del gráfico
-    updateMarkers(newPositions, botTradePositionsRef.current)
+    updateMarkers(newPositions, botTradePositionsRef.current, backtestTradesRef.current)
   }
 
   const deleteTrade = (id: string) => {
@@ -852,7 +938,7 @@ export default function CandlestickChart() {
     }
 
     setTradePositions(newPositions)
-    updateMarkers(newPositions, botTradePositionsRef.current)
+    updateMarkers(newPositions, botTradePositionsRef.current, backtestTradesRef.current)
 
     // Remover de selección si estaba seleccionado
     const newSelected = new Set(selectedTradeIds)
@@ -881,7 +967,7 @@ export default function CandlestickChart() {
     }
 
     setTradePositions(newPositions)
-    updateMarkers(newPositions, botTradePositionsRef.current)
+    updateMarkers(newPositions, botTradePositionsRef.current, backtestTradesRef.current)
     setSelectedTradeIds(new Set())
   }
 
@@ -996,7 +1082,36 @@ export default function CandlestickChart() {
     return `${m}m`
   }
 
-  const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
+  const tradeToRuler = (trade: BacktestTrade): SavedRuler => ({
+    id: `btr-${trade.id}`,
+    anchorPrice: trade.entryPrice,
+    anchorTime: trade.entryTime,
+    endPrice: trade.tpPrice,
+    endTime: trade.exitTime,
+    slPrice: trade.slPrice,
+  })
+
+  const handleBacktestResult = (trades: BacktestTrade[], _summary: BacktestSummary, startTimeSec: number, showRulers: boolean) => {
+    setBacktestTrades(trades)
+    if (showRulers) {
+      backtestRulersAllRef.current = trades.map(tradeToRuler)
+    } else {
+      backtestRulersAllRef.current = []
+    }
+    // Navigate chart to backtest start date so markers are visible
+    navigateToDate(new Date(startTimeSec * 1000))
+    // Update visible rulers after navigation (delayed to let chart settle)
+    setTimeout(() => updateVisibleBacktestRulersRef.current?.(), 600)
+  }
+
+  const handleBacktestClear = () => {
+    setBacktestTrades([])
+    backtestRulersAllRef.current = []
+    setVisibleBacktestRulers([])
+    backtestRulerDomRefs.current.clear()
+  }
+
+    const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
   const pnlBgColor = profitLoss >= 0 ? 'bg-green-500' : 'bg-red-500'
 
   return (
@@ -1156,6 +1271,24 @@ export default function CandlestickChart() {
             className={`w-full h-full${rulerMode ? ' cursor-crosshair' : ''}`}
           />
 
+          {/* Backtest rulers — read-only TP/SL rectangles, only visible subset rendered */}
+          {visibleBacktestRulers.map(ruler => {
+            const setTp = (el: HTMLDivElement | null) => {
+              const prev = backtestRulerDomRefs.current.get(ruler.id) ?? { tp: null, sl: null }
+              backtestRulerDomRefs.current.set(ruler.id, { ...prev, tp: el })
+            }
+            const setSl = (el: HTMLDivElement | null) => {
+              const prev = backtestRulerDomRefs.current.get(ruler.id) ?? { tp: null, sl: null }
+              backtestRulerDomRefs.current.set(ruler.id, { ...prev, sl: el })
+            }
+            return (
+              <div key={ruler.id} className="absolute pointer-events-none" style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 3 }}>
+                <div ref={setTp} className="absolute" style={{ border: '1px solid rgba(34,171,148,0.45)', background: 'rgba(34,171,148,0.06)' }} />
+                <div ref={setSl} className="absolute" style={{ border: '1px solid rgba(247,82,95,0.45)', background: 'rgba(247,82,95,0.06)' }} />
+              </div>
+            )
+          })}
+
           {/* Saved rulers — positions updated at 60fps via RAF (no React re-renders during scroll) */}
           {savedRulers.map(ruler => {
             const isSelected = selectedRulerId === ruler.id
@@ -1268,7 +1401,12 @@ export default function CandlestickChart() {
             )
           })()}
 
-          {loading && (
+          <BacktestPanel
+            onResult={handleBacktestResult}
+            onClear={handleBacktestClear}
+          />
+
+                    {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75">
               <div className="text-lg">Cargando datos...</div>
             </div>
