@@ -1091,8 +1091,9 @@ export default function CandlestickChart() {
     slPrice: trade.slPrice,
   })
 
-  const handleBacktestResult = (trades: BacktestTrade[], _summary: BacktestSummary, startTimeSec: number, showRulers: boolean) => {
+  const handleBacktestResult = (trades: BacktestTrade[], summary: BacktestSummary, startTimeSec: number, showRulers: boolean) => {
     setBacktestTrades(trades)
+    localStorage.setItem('bitcoin-trader-backtest-summary', JSON.stringify(summary))
     if (showRulers) {
       backtestRulersAllRef.current = trades.map(tradeToRuler)
     } else {

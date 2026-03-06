@@ -24,12 +24,20 @@ export interface BacktestConfig {
   initialDirection: BacktestDirection
 }
 
+export interface EquityPoint {
+  time: number   // unix seconds (exitTime of each trade)
+  value: number  // cumulative P&L %
+}
+
 export interface BacktestSummary {
   trades: BacktestTrade[]
   totalPnlPct: number
   winCount: number
   lossCount: number
   winRate: number             // 0–100
+  maxDrawdown: number         // most negative cumulative drop (e.g. -5.3)
+  maxRunup: number            // largest cumulative rise from a trough (e.g. +8.2)
+  equityCurve: EquityPoint[]  // cumulative P&L % over time
 }
 
 const INTERVAL = '5m'
@@ -113,7 +121,7 @@ export function runBacktest(
   // Find the first candle at or after startTime
   const startIdx = candles.findIndex(c => (c.time as number) >= config.startTime)
   if (startIdx === -1 || startIdx >= candles.length - 1) {
-    return { trades: [], totalPnlPct: 0, winCount: 0, lossCount: 0, winRate: 0 }
+    return { trades: [], totalPnlPct: 0, winCount: 0, lossCount: 0, winRate: 0, maxDrawdown: 0, maxRunup: 0, equityCurve: [] }
   }
 
   const trades: BacktestTrade[] = []
@@ -219,5 +227,23 @@ export function runBacktest(
   const totalPnlPct = trades.reduce((sum, t) => sum + t.pnlPct, 0)
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
-  return { trades, totalPnlPct, winCount, lossCount, winRate }
+  // Equity curve, max drawdown, max runup
+  const equityCurve: EquityPoint[] = []
+  let cumulative = 0
+  let peak = 0
+  let trough = 0
+  let maxDrawdown = 0
+  let maxRunup = 0
+  for (const trade of trades) {
+    cumulative += trade.pnlPct
+    equityCurve.push({ time: trade.exitTime, value: parseFloat(cumulative.toFixed(4)) })
+    if (cumulative > peak) peak = cumulative
+    if (cumulative < trough) trough = cumulative
+    const dd = cumulative - peak
+    const ru = cumulative - trough
+    if (dd < maxDrawdown) maxDrawdown = dd
+    if (ru > maxRunup) maxRunup = ru
+  }
+
+  return { trades, totalPnlPct, winCount, lossCount, winRate, maxDrawdown, maxRunup, equityCurve }
 }

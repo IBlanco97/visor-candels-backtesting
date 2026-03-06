@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
+import Link from 'next/link'
 import { CandlestickData, Time } from 'lightweight-charts'
 import {
   BacktestConfig,
@@ -284,6 +285,15 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
             <div className="text-xs text-gray-500 text-center">
               Sin operaciones completadas en el rango
             </div>
+          )}
+
+          {summary && summary.trades.length > 0 && !running && (
+            <Link
+              href="/backtest"
+              className="block text-center text-xs py-1.5 rounded bg-orange-900/50 hover:bg-orange-800/60 text-orange-300 border border-orange-800/60 transition-colors"
+            >
+              Ver análisis detallado →
+            </Link>
           )}
         </div>
       )}
