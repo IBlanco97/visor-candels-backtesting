@@ -12,12 +12,15 @@ interface TradePosition {
   entryTime: number
   exitPrice?: number
   exitTime?: number
+  source?: 'manual' | 'bot'
+  botStatus?: string
 }
 
 type SortField = 'index' | 'direction' | 'entryPrice' | 'exitPrice' | 'pnl' | 'entryTime'
 type SortDir = 'asc' | 'desc'
 type FilterDirection = 'all' | 'long' | 'short'
 type FilterStatus = 'all' | 'completed' | 'open'
+type FilterSource = 'all' | 'manual' | 'bot'
 
 const PAGE_SIZE = 50
 
@@ -42,6 +45,7 @@ export default function TradesPage() {
   const [trades, setTrades] = useState<TradePosition[]>([])
   const [filterDir, setFilterDir] = useState<FilterDirection>('all')
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all')
+  const [filterSource, setFilterSource] = useState<FilterSource>('all')
   const [sortField, setSortField] = useState<SortField>('index')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [page, setPage] = useState(1)
@@ -49,17 +53,29 @@ export default function TradesPage() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('bitcoin-trader-positions')
-      setTrades(raw ? JSON.parse(raw) : [])
+      const manual: TradePosition[] = (() => {
+        const raw = localStorage.getItem('bitcoin-trader-positions')
+        return raw ? JSON.parse(raw) : []
+      })()
+      const bot: TradePosition[] = (() => {
+        const raw = localStorage.getItem('bitcoin-trader-bot-trades')
+        return raw ? JSON.parse(raw) : []
+      })()
+      const manualTagged = manual.map(t => ({ ...t, source: 'manual' as const }))
+      const botTagged = bot.map(t => ({ ...t, source: 'bot' as const }))
+      setTrades([...manualTagged, ...botTagged])
     } catch {
       setTrades([])
     }
   }, [])
 
   const deleteTrade = (id: string) => {
+    const trade = trades.find(t => t.id === id)
+    if (!trade || trade.source === 'bot') return
     const updated = trades.filter(t => t.id !== id)
     setTrades(updated)
-    localStorage.setItem('bitcoin-trader-positions', JSON.stringify(updated))
+    const manualOnly = updated.filter(t => t.source !== 'bot')
+    localStorage.setItem('bitcoin-trader-positions', JSON.stringify(manualOnly))
   }
 
   // Trades con índice original y pnl calculado
@@ -99,6 +115,8 @@ export default function TradesPage() {
     if (filterDir !== 'all') list = list.filter(t => t.direction === filterDir)
     if (filterStatus === 'completed') list = list.filter(t => t.pnl != null)
     if (filterStatus === 'open') list = list.filter(t => t.pnl == null)
+    if (filterSource === 'manual') list = list.filter(t => t.source !== 'bot')
+    if (filterSource === 'bot') list = list.filter(t => t.source === 'bot')
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       list = list.filter(t =>
@@ -109,7 +127,7 @@ export default function TradesPage() {
       )
     }
     return list
-  }, [enriched, filterDir, filterStatus, search])
+  }, [enriched, filterDir, filterStatus, filterSource, search])
 
   // Ordenación
   const sorted = useMemo(() => {
@@ -142,7 +160,7 @@ export default function TradesPage() {
   }
 
   // Reset page when filters change
-  useEffect(() => { setPage(1) }, [filterDir, filterStatus, search])
+  useEffect(() => { setPage(1) }, [filterDir, filterStatus, filterSource, search])
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col">
@@ -222,6 +240,22 @@ export default function TradesPage() {
             ))}
           </div>
 
+          <div className="flex gap-1">
+            {(['all', 'manual', 'bot'] as FilterSource[]).map(s => (
+              <button
+                key={s}
+                onClick={() => setFilterSource(s)}
+                className={`px-3 py-1 text-sm rounded transition-colors ${
+                  filterSource === s
+                    ? s === 'bot' ? 'bg-purple-700 text-white' : 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                {s === 'all' ? 'Todas' : s === 'manual' ? 'Manual' : '🤖 Bot'}
+              </button>
+            ))}
+          </div>
+
           <span className="text-sm text-gray-400 ml-auto">
             {filtered.length} resultado{filtered.length !== 1 ? 's' : ''}
           </span>
@@ -253,13 +287,19 @@ export default function TradesPage() {
                 ) : paginated.map(trade => {
                   const isLong = trade.direction === 'long'
                   const isComplete = trade.pnl != null
+                  const isBot = trade.source === 'bot'
                   const pnlColor = !isComplete ? 'text-yellow-400' : trade.pnl! >= 0 ? 'text-green-400' : 'text-red-400'
                   return (
-                    <tr key={trade.id} className="hover:bg-gray-750 transition-colors">
-                      <td className="px-4 py-3 text-gray-400 font-mono">#{trade.originalIndex}</td>
+                    <tr key={trade.id} className={`hover:bg-gray-750 transition-colors ${isBot ? 'bg-purple-950/20' : ''}`}>
+                      <td className="px-4 py-3 text-gray-400 font-mono">
+                        #{trade.originalIndex}
+                        {isBot && <span className="ml-1.5 text-xs bg-purple-800 text-purple-200 px-1 py-0.5 rounded font-semibold">BOT</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold ${
-                          isLong ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'
+                          isLong
+                            ? isBot ? 'bg-purple-900 text-purple-300' : 'bg-green-900 text-green-300'
+                            : isBot ? 'bg-amber-900 text-amber-300' : 'bg-red-900 text-red-300'
                         }`}>
                           {isLong ? '📈 LONG' : '📉 SHORT'}
                         </span>
@@ -291,13 +331,17 @@ export default function TradesPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => deleteTrade(trade.id)}
-                          className="text-gray-500 hover:text-red-400 hover:bg-red-900/30 rounded p-1 transition-colors"
-                          title="Eliminar operación"
-                        >
-                          ✕
-                        </button>
+                        {isBot ? (
+                          <span className="text-gray-700 rounded p-1" title="Las operaciones del bot no se pueden eliminar manualmente">—</span>
+                        ) : (
+                          <button
+                            onClick={() => deleteTrade(trade.id)}
+                            className="text-gray-500 hover:text-red-400 hover:bg-red-900/30 rounded p-1 transition-colors"
+                            title="Eliminar operación"
+                          >
+                            ✕
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )
