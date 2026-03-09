@@ -148,10 +148,7 @@ export default function CandlestickChart() {
   const vlineDomRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
   const plotInsetsRef = useRef({ right: 65, bottom: 32 })
 
-  const [backtestTrades, setBacktestTrades] = useState<BacktestTrade[]>(() => {
-    if (typeof window === 'undefined') return []
-    try { return JSON.parse(localStorage.getItem('bitcoin-trader-backtest-trades') || '[]') } catch { return [] }
-  })
+  const [backtestTrades, setBacktestTrades] = useState<BacktestTrade[]>([])
   const backtestTradesRef = useRef<BacktestTrade[]>([])
 
   // Backtest rulers: all computed rulers and the visible subset rendered in DOM
@@ -813,7 +810,6 @@ export default function CandlestickChart() {
 
   useEffect(() => {
     backtestTradesRef.current = backtestTrades
-    localStorage.setItem('bitcoin-trader-backtest-trades', JSON.stringify(backtestTrades))
     updateMarkers(tradePositionsRef.current, botTradePositionsRef.current, backtestTrades)
   }, [backtestTrades]) // eslint-disable-line react-hooks/exhaustive-deps
 
