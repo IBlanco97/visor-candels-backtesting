@@ -2,11 +2,12 @@ import type { BacktestConfig, BacktestSummary, BacktestTrade, EquityPoint } from
 
 export interface SavedBacktest {
   id: string
-  name: string        // auto-generated: "15/01/25 · TP1% SL1% LONG"
+  name: string        // auto-generated: "15/01/25 → 20/01/25 · TP1% SL1% LONG"
   savedAt: number     // Date.now()
   config: BacktestConfig
   summary: BacktestSummary
   startTimeSec: number
+  endTimeSec?: number  // undefined = ran until present
 }
 
 // ─── IndexedDB setup ─────────────────────────────────────────────────────────
@@ -83,11 +84,15 @@ export async function saveBacktest(
   config: BacktestConfig,
   summary: BacktestSummary,
   startTimeSec: number,
+  endTimeSec?: number,
 ): Promise<SavedBacktest> {
-  const date    = new Date(startTimeSec * 1000)
-  const dateStr = date.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  const fmt = (sec: number) =>
+    new Date(sec * 1000).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })
+
+  const dateStr = fmt(startTimeSec)
+  const endStr  = endTimeSec ? ` → ${fmt(endTimeSec)}` : ''
   const trigger = config.triggerPrice ? ` @${config.triggerPrice}` : ''
-  const name    = `${dateStr}${trigger} · TP${config.tpPct}% SL${config.slPct}% ${config.initialDirection.toUpperCase()}`
+  const name    = `${dateStr}${endStr}${trigger} · TP${config.tpPct}% SL${config.slPct}% ${config.initialDirection.toUpperCase()}`
 
   // Strip equityCurve before storing — recomputed on load
   const toStore: SavedBacktest = {
@@ -97,6 +102,7 @@ export async function saveBacktest(
     config,
     summary: { ...summary, equityCurve: [] },
     startTimeSec,
+    ...(endTimeSec !== undefined ? { endTimeSec } : {}),
   }
 
   const db = await openDB()

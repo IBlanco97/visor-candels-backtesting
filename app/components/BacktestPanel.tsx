@@ -30,6 +30,8 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
   // Config inputs
   const [startDate, setStartDate] = useState('')
   const [startTime, setStartTime] = useState('00:00')
+  const [endDate, setEndDate] = useState('')
+  const [endTime, setEndTime] = useState('23:59')
   const [triggerPrice, setTriggerPrice] = useState('')
   const [tpPct, setTpPct] = useState(1.0)
   const [slPct, setSlPct] = useState(1.0)
@@ -60,6 +62,14 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
     const nowMs = Date.now()
     if (startMs >= nowMs) { setError('La fecha debe ser anterior a hoy'); return }
 
+    let endMs = nowMs
+    if (endDate) {
+      const parsed = new Date(endDate + 'T' + endTime + ':00').getTime()
+      if (isNaN(parsed)) { setError('Fecha de fin inválida'); return }
+      if (parsed <= startMs) { setError('La fecha de fin debe ser posterior a la de inicio'); return }
+      endMs = Math.min(parsed, nowMs)
+    }
+
     setError(null)
     setSummary(null)
     setRunning(true)
@@ -67,7 +77,7 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
     setProgress({ fetched: 0, total: 1 })
 
     const startTimeSec = Math.floor(startMs / 1000)
-    const endTimeSec = Math.floor(nowMs / 1000)
+    const endTimeSec = Math.floor(endMs / 1000)
 
     try {
       const candles: CandlestickData<Time>[] = await fetchCandlesForBacktest(
@@ -99,7 +109,7 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
 
       // Persist to history
       if (result.trades.length > 0) {
-        await saveBacktest(config, result, startTimeSec)
+        await saveBacktest(config, result, startTimeSec, endDate ? endTimeSec : undefined)
         setHistory(await loadHistory())
       }
 
@@ -114,7 +124,7 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
         setProgress(null)
       }
     }
-  }, [startDate, tpPct, slPct, initialDirection, onResult])
+  }, [startDate, startTime, endDate, endTime, triggerPrice, tpPct, slPct, initialDirection, onResult])
 
   const handleClear = useCallback(() => {
     abortRef.current = true
@@ -180,6 +190,44 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
                 className="w-20 bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50"
               />
             </div>
+          </div>
+
+          {/* End date + time (optional) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-gray-400">Fecha y hora fin</label>
+              <span className="text-gray-600 text-xs">
+                {endDate ? '' : '← hasta hoy'}
+              </span>
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                min={startDate || undefined}
+                max={new Date().toISOString().split('T')[0]}
+                disabled={running}
+                placeholder="opcional"
+                className="flex-1 bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+              />
+              <input
+                type="time"
+                value={endTime}
+                onChange={e => setEndTime(e.target.value)}
+                disabled={running || !endDate}
+                className="w-20 bg-gray-800 text-white text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-orange-500 disabled:opacity-50 disabled:text-gray-600"
+              />
+            </div>
+            {endDate && (
+              <button
+                onClick={() => setEndDate('')}
+                disabled={running}
+                className="mt-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                ✕ Quitar fecha fin
+              </button>
+            )}
           </div>
 
           {/* Trigger price (optional) */}
