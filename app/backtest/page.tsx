@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { createChart, BaselineSeries, ColorType, Time } from 'lightweight-charts'
 import type { BacktestSummary, BacktestTrade } from '../services/backtestEngine'
+import { loadHistory, setActiveBacktest, type SavedBacktest } from '../services/backtestHistory'
 
 const PAGE_SIZE = 100
 
@@ -35,6 +36,9 @@ function StatCard({ label, value, sub, highlight }: { label: string; value: stri
 
 export default function BacktestAnalysisPage() {
   const [summary, setSummary] = useState<BacktestSummary | null>(null)
+  const [activeEntry, setActiveEntry] = useState<SavedBacktest | null>(null)
+  const [history, setHistory] = useState<SavedBacktest[]>([])
+  const [showHistoryDropdown, setShowHistoryDropdown] = useState(false)
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const [page, setPage] = useState(0)
   const [filterResult, setFilterResult] = useState<'all' | 'tp' | 'sl'>('all')
@@ -42,11 +46,43 @@ export default function BacktestAnalysisPage() {
   const [sortDesc, setSortDesc] = useState(false)
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('bitcoin-trader-backtest-summary')
-      if (raw) setSummary(JSON.parse(raw))
-    } catch { /* ignore */ }
+    ;(async () => {
+      const hist = await loadHistory()
+      setHistory(hist)
+
+      // Try to find which one is active via the stored _id
+      try {
+        const raw = localStorage.getItem('bitcoin-trader-backtest-summary')
+        const id  = raw ? (JSON.parse(raw)._id ?? null) : null
+        const matched = id ? hist.find(e => e.id === id) : null
+        const target  = matched ?? hist[0] ?? null
+        if (target) {
+          setActiveEntry(target)
+          setSummary(target.summary)
+        }
+      } catch { /* ignore */ }
+    })()
   }, [])
+
+  useEffect(() => {
+    if (!showHistoryDropdown) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('[data-history-dropdown]')) setShowHistoryDropdown(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showHistoryDropdown])
+
+  function switchToEntry(entry: SavedBacktest) {
+    setActiveEntry(entry)
+    setSummary(entry.summary)
+    setActiveBacktest(entry)
+    setShowHistoryDropdown(false)
+    setPage(0)
+    setFilterResult('all')
+    setFilterDir('all')
+  }
 
   // Build equity curve chart
   useEffect(() => {
@@ -120,8 +156,52 @@ export default function BacktestAnalysisPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-orange-400">📊 Análisis de Backtest</h1>
+      <div className="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center gap-3">
+        <h1 className="text-lg font-bold text-orange-400 mr-auto">📊 Análisis de Backtest</h1>
+
+        {/* History selector */}
+        {history.length > 0 && (
+          <div className="relative" data-history-dropdown>
+            <button
+              onClick={() => setShowHistoryDropdown(p => !p)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 border border-gray-600 transition-colors"
+            >
+              <span>📂 Historial</span>
+              {activeEntry && (
+                <span className="text-gray-500 max-w-[160px] truncate">{activeEntry.name}</span>
+              )}
+              <span className="text-gray-500">{showHistoryDropdown ? '▲' : '▼'}</span>
+            </button>
+
+            {showHistoryDropdown && (
+              <div className="absolute right-0 top-full mt-1 z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl w-80 max-h-72 overflow-y-auto">
+                {history.map(entry => (
+                  <button
+                    key={entry.id}
+                    onClick={() => switchToEntry(entry)}
+                    className={`w-full text-left px-3 py-2 hover:bg-gray-700 transition-colors border-b border-gray-700/50 last:border-0 ${
+                      activeEntry?.id === entry.id ? 'bg-orange-900/30' : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-gray-200 truncate flex-1">{entry.name}</span>
+                      <span className={`text-xs font-mono font-semibold shrink-0 ${entry.summary.totalPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {entry.summary.totalPnlPct >= 0 ? '+' : ''}{entry.summary.totalPnlPct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="flex gap-3 mt-0.5">
+                      <span className="text-[10px] text-gray-500">{entry.summary.trades.length} ops · {entry.summary.winRate.toFixed(1)}% WR</span>
+                      <span className="text-[10px] text-gray-600">
+                        {new Date(entry.savedAt).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <Link href="/" className="text-sm text-gray-400 hover:text-white transition-colors">
           ← Volver al gráfico
         </Link>

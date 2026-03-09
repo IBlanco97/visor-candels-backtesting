@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import { CandlestickData, Time } from 'lightweight-charts'
 import {
@@ -11,6 +11,13 @@ import {
   fetchCandlesForBacktest,
   runBacktest,
 } from '../services/backtestEngine'
+import {
+  SavedBacktest,
+  loadHistory,
+  saveBacktest,
+  deleteBacktest,
+  setActiveBacktest,
+} from '../services/backtestHistory'
 
 interface BacktestPanelProps {
   onResult: (trades: BacktestTrade[], summary: BacktestSummary, startTimeSec: number, showRulers: boolean) => void
@@ -35,7 +42,15 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<BacktestSummary | null>(null)
 
+  // History
+  const [history, setHistory] = useState<SavedBacktest[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+
   const abortRef = useRef(false)
+
+  useEffect(() => {
+    loadHistory().then(setHistory)
+  }, [])
 
   const handleSimulate = useCallback(async () => {
     if (!startDate) { setError('Selecciona una fecha de inicio'); return }
@@ -81,6 +96,13 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
 
       const result = runBacktest(candles, config)
       setSummary(result)
+
+      // Persist to history
+      if (result.trades.length > 0) {
+        await saveBacktest(config, result, startTimeSec)
+        setHistory(await loadHistory())
+      }
+
       onResult(result.trades, result, startTimeSec, showRulers)
     } catch (err) {
       if (!abortRef.current) {
@@ -102,6 +124,18 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
     setError(null)
     onClear()
   }, [onClear])
+
+  const handleLoadFromHistory = useCallback((entry: SavedBacktest) => {
+    setSummary(entry.summary)
+    setActiveBacktest(entry)
+    onResult(entry.summary.trades, entry.summary, entry.startTimeSec, true)
+    setShowHistory(false)
+  }, [onResult])
+
+  const handleDeleteFromHistory = useCallback((id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    deleteBacktest(id).then(() => loadHistory().then(setHistory))
+  }, [])
 
   const progressPct =
     progress && progress.total > 0
@@ -326,6 +360,59 @@ export default function BacktestPanel({ onResult, onClear }: BacktestPanelProps)
             >
               Ver análisis detallado →
             </Link>
+          )}
+
+          {/* History toggle */}
+          {history.length > 0 && (
+            <div className="border-t border-gray-700 pt-2">
+              <button
+                onClick={() => setShowHistory(p => !p)}
+                className="w-full flex items-center justify-between text-xs text-gray-400 hover:text-gray-200 transition-colors py-0.5"
+              >
+                <span>📂 Historial ({history.length})</span>
+                <span>{showHistory ? '▲' : '▼'}</span>
+              </button>
+
+              {showHistory && (
+                <div className="mt-2 flex flex-col gap-1 max-h-52 overflow-y-auto pr-0.5">
+                  {history.map(entry => (
+                    <div
+                      key={entry.id}
+                      className="flex items-start gap-1.5 bg-gray-800 rounded px-2 py-1.5 border border-gray-700"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-gray-200 leading-tight truncate">{entry.name}</div>
+                        <div className="flex gap-2 mt-0.5">
+                          <span className="text-gray-500 text-[10px]">
+                            {new Date(entry.savedAt).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                          </span>
+                          <span className={`text-[10px] font-mono font-semibold ${entry.summary.totalPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {entry.summary.totalPnlPct >= 0 ? '+' : ''}{entry.summary.totalPnlPct.toFixed(2)}%
+                          </span>
+                          <span className="text-gray-500 text-[10px]">{entry.summary.trades.length} ops</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          onClick={() => handleLoadFromHistory(entry)}
+                          className="px-1.5 py-0.5 text-[10px] rounded bg-orange-700/60 hover:bg-orange-600 text-orange-200 transition-colors"
+                          title="Cargar este backtest"
+                        >
+                          Cargar
+                        </button>
+                        <button
+                          onClick={e => handleDeleteFromHistory(entry.id, e)}
+                          className="px-1.5 py-0.5 text-[10px] rounded bg-gray-700 hover:bg-red-900/60 text-gray-400 hover:text-red-300 transition-colors"
+                          title="Eliminar"
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

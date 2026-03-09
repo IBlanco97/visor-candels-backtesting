@@ -21,6 +21,14 @@ interface SavedRuler {
 
 type RulerDomEntry = { rect: HTMLDivElement | null; slRect: HTMLDivElement | null; anchorDot: HTMLDivElement | null; endDot: HTMLDivElement | null; label: HTMLDivElement | null; deleteBtn: HTMLDivElement | null }
 
+interface VLine {
+  id: string
+  time: number
+  color: string
+}
+
+const VLINE_COLORS = ['#f59e0b', '#22ab94', '#f7525f', '#a855f7', '#38bdf8', '#e2e8f0', '#6b7280']
+
 interface TradePosition {
   id: string
   direction: TradeDirection
@@ -108,6 +116,17 @@ export default function CandlestickChart() {
   const rulerDomRefs = useRef<Map<string, RulerDomEntry>>(new Map())
   const rulerRafId = useRef<number | null>(null)
   const [plotInsets, setPlotInsets] = useState({ right: 65, bottom: 32 })
+
+  const [vlineMode, setVlineMode] = useState(false)
+  const vlineModeRef = useRef(false)
+  const [vlineColor, setVlineColor] = useState('#f59e0b')
+  const vlineColorRef = useRef('#f59e0b')
+  const [vlines, setVlines] = useState<VLine[]>(() => {
+    if (typeof window === 'undefined') return []
+    try { return JSON.parse(localStorage.getItem('bitcoin-trader-vlines') || '[]') } catch { return [] }
+  })
+  const vlinesRef = useRef<VLine[]>([])
+  const vlineDomRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
   const plotInsetsRef = useRef({ right: 65, bottom: 32 })
 
   const [backtestTrades, setBacktestTrades] = useState<BacktestTrade[]>(() => {
@@ -184,11 +203,38 @@ export default function CandlestickChart() {
       try {
         setLoading(true)
         initialLoadCompleteRef.current = false
-        const data = await fetchBitcoinCandlesticks('5m', 1000)
+
+        // Check if there's a stored historical position (> 1 day ago) to load directly
+        let storedPos: { from: number; to: number; centerTime: number } | null = null
+        let initialEndTimeMs: number | undefined = undefined
+        try {
+          const raw = localStorage.getItem('bitcoin-trader-chart-position')
+          if (raw) {
+            storedPos = JSON.parse(raw)
+            const nowSec = Date.now() / 1000
+            if (storedPos && storedPos.centerTime < nowSec - 86400) {
+              initialEndTimeMs = storedPos.centerTime * 1000 + 250 * 5 * 60 * 1000
+            }
+          }
+        } catch {}
+
+        const data = initialEndTimeMs
+          ? await fetchCandlesWithCache('5m', 1000, initialEndTimeMs)
+          : await fetchBitcoinCandlesticks('5m', 1000)
+
         if (cancelled) return
         if (loadedCandlesRef.current.length > 0) return
         candlestickSeries.setData(data)
-        chart.timeScale().scrollToRealTime()
+
+        if (storedPos && initialEndTimeMs) {
+          // Restore exact saved range without going through real-time first
+          chart.timeScale().setVisibleRange({ from: storedPos.from as Time, to: storedPos.to as Time })
+          hasMoreFutureDataRef.current = true
+        } else {
+          chart.timeScale().scrollToRealTime()
+          hasMoreFutureDataRef.current = false
+        }
+
         loadedCandlesRef.current = data
         setLoadedCandles(data)
         if (data.length > 0) {
@@ -197,7 +243,6 @@ export default function CandlestickChart() {
           const firstCandleTime = data[0].time
           oldestCandleTimeRef.current = typeof firstCandleTime === 'number' ? firstCandleTime : 0
           newestCandleTimeRef.current = typeof lastCandle.time === 'number' ? lastCandle.time : 0
-          hasMoreFutureDataRef.current = false
         }
         setLoading(false)
         initialLoadCompleteRef.current = true
@@ -365,6 +410,18 @@ export default function CandlestickChart() {
         }
         }
       }
+      // Vertical lines — update X position via RAF (no React re-renders)
+      if (vlinesRef.current.length > 0) {
+        const ts2 = chart.timeScale()
+        for (const vl of vlinesRef.current) {
+          const el = vlineDomRefs.current.get(vl.id)
+          if (!el) continue
+          const x = ts2.timeToCoordinate(vl.time as Time) ?? -9999
+          el.style.left = `${x - 0.5}px`
+          el.style.display = x < -10 || x > 9999 ? 'none' : 'block'
+        }
+      }
+
       rulerRafId.current = requestAnimationFrame(drawRulerPositions)
     }
     rulerRafId.current = requestAnimationFrame(drawRulerPositions)
@@ -548,6 +605,16 @@ export default function CandlestickChart() {
       const x = event.clientX - rect.left
       const y = event.clientY - rect.top
 
+      // Vline mode: drop a vertical line at the clicked time
+      if (vlineModeRef.current) {
+        const time = chart.timeScale().coordinateToTime(x)
+        if (time !== null) {
+          const newVl: VLine = { id: Date.now().toString(), time: time as number, color: vlineColorRef.current }
+          setVlines(prev => [...prev, newVl])
+        }
+        return
+      }
+
       // Ruler tool intercepts all clicks when active
       if (rulerModeRef.current) {
         const time = chart.timeScale().coordinateToTime(x)
@@ -729,8 +796,17 @@ export default function CandlestickChart() {
   useEffect(() => { visibleBacktestRulersRef.current = visibleBacktestRulers }, [visibleBacktestRulers])
 
   useEffect(() => {
+    vlinesRef.current = vlines
+    localStorage.setItem('bitcoin-trader-vlines', JSON.stringify(vlines))
+  }, [vlines])
+
+  useEffect(() => { vlineModeRef.current = vlineMode }, [vlineMode])
+  useEffect(() => { vlineColorRef.current = vlineColor }, [vlineColor])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (vlineModeRef.current) { setVlineMode(false); return }
         if (rulerModeRef.current) setRulerMode(false)
         else if (selectedRulerIdRef.current) {
           if (selectedRulerLinesRef.current && seriesRef.current) {
@@ -1063,6 +1139,16 @@ export default function CandlestickChart() {
     rulerDomRefs.current.clear()
   }
 
+  const deleteVline = (id: string) => {
+    setVlines(prev => prev.filter(v => v.id !== id))
+    vlineDomRefs.current.delete(id)
+  }
+
+  const deleteAllVlines = () => {
+    setVlines([])
+    vlineDomRefs.current.clear()
+  }
+
   const countCandlesInRange = (t1: number, t2: number): number => {
     const lo = Math.min(t1, t2)
     const hi = Math.max(t1, t2)
@@ -1194,6 +1280,51 @@ export default function CandlestickChart() {
                 🗑️ Reglas
               </button>
             )}
+            {/* Vertical line tool */}
+            <div className="flex items-center gap-1 border-l border-gray-600 pl-3">
+              <button
+                onClick={() => {
+                  setVlineMode(prev => !prev)
+                  if (rulerMode) setRulerMode(false)
+                  if (tradeStage !== 'idle') resetActiveTrade()
+                }}
+                className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 ${
+                  vlineMode
+                    ? 'bg-yellow-600 text-white font-semibold ring-2 ring-yellow-400'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+                title="Líneas verticales (Esc para salir)"
+              >
+                ▏Línea{vlines.length > 0 && (
+                  <span className="bg-yellow-800 text-yellow-200 text-xs px-1.5 py-0.5 rounded-full leading-none">
+                    {vlines.length}
+                  </span>
+                )}
+              </button>
+              {/* Color palette */}
+              <div className="flex gap-0.5">
+                {VLINE_COLORS.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setVlineColor(c)}
+                    title={c}
+                    className={`w-4 h-4 rounded-full border transition-all ${
+                      vlineColor === c ? 'border-white scale-125' : 'border-gray-600 hover:border-gray-400'
+                    }`}
+                    style={{ background: c }}
+                  />
+                ))}
+              </div>
+              {vlines.length > 0 && (
+                <button
+                  onClick={deleteAllVlines}
+                  className="px-2 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-red-900 hover:text-red-300 transition-colors"
+                  title="Borrar todas las líneas"
+                >
+                  🗑️
+                </button>
+              )}
+            </div>
           <div className="flex items-center gap-2 border-l border-gray-600 pl-4">
             <span className="text-xs text-gray-400 whitespace-nowrap">Ir a fecha:</span>
             <input
@@ -1271,6 +1402,34 @@ export default function CandlestickChart() {
             data-testid="chart-container"
             className={`w-full h-full${rulerMode ? ' cursor-crosshair' : ''}`}
           />
+
+          {/* Vertical lines — positioned via RAF loop */}
+          {vlines.map(vl => (
+            <div
+              key={vl.id}
+              className="absolute"
+              style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 6, pointerEvents: 'none' }}
+            >
+              <div
+                ref={el => vlineDomRefs.current.set(vl.id, el)}
+                className="absolute"
+                style={{ top: 0, bottom: 0, width: '1px', background: vl.color, opacity: 0.75 }}
+              >
+                {/* Delete button + color dot at the top of the line */}
+                <div
+                  className="absolute flex items-center gap-0.5"
+                  style={{ top: 4, left: -8, pointerEvents: 'auto' }}
+                >
+                  <div
+                    className="w-3 h-3 rounded-full border border-gray-900 cursor-pointer hover:scale-125 transition-transform"
+                    style={{ background: vl.color }}
+                    onClick={() => deleteVline(vl.id)}
+                    title="Eliminar línea"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
 
           {/* Backtest rulers — read-only TP/SL rectangles, only visible subset rendered */}
           {visibleBacktestRulers.map(ruler => {
