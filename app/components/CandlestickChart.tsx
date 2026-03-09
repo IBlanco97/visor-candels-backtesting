@@ -1411,7 +1411,7 @@ export default function CandlestickChart() {
               style={{ top: 0, left: 0, right: `${plotInsets.right}px`, bottom: `${plotInsets.bottom}px`, zIndex: 6, pointerEvents: 'none' }}
             >
               <div
-                ref={el => vlineDomRefs.current.set(vl.id, el)}
+                ref={el => { vlineDomRefs.current.set(vl.id, el) }}
                 className="absolute"
                 style={{ top: 0, bottom: 0, width: '1px', background: vl.color, opacity: 0.75 }}
               >
