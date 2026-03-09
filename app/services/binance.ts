@@ -27,10 +27,11 @@ export async function fetchBitcoinCandlesticks(
   interval: string = '5m',
   limit: number = 1000,
   endTime?: number,
-  startTime?: number
+  startTime?: number,
+  symbol: string = 'BTCUSDT'
 ): Promise<CandlestickData<Time>[]> {
   try {
-    let url = `${BINANCE_API_BASE}?symbol=BTCUSDT&interval=${interval}&limit=${limit}`
+    let url = `${BINANCE_API_BASE}?symbol=${symbol}&interval=${interval}&limit=${limit}`
     if (endTime) {
       url += `&endTime=${endTime}`
     }
@@ -66,7 +67,8 @@ export async function fetchCandlesWithCache(
   interval: string = '5m',
   limit: number = 1000,
   endTime?: number,
-  startTime?: number
+  startTime?: number,
+  symbol: string = 'BTCUSDT'
 ): Promise<CandlestickData<Time>[]> {
   const intervalSec = INTERVAL_SECONDS[interval] ?? 300
 
@@ -76,13 +78,13 @@ export async function fetchCandlesWithCache(
     const rangeEnd = endSec ?? (startSec! + (limit - 1) * intervalSec)
     const rangeStart = startSec ?? (endSec! - (limit - 1) * intervalSec)
 
-    const cached = await candleCache.getCandles(rangeStart, rangeEnd)
+    const cached = await candleCache.getCandles(symbol, interval, rangeStart, rangeEnd)
     if (cached.length >= limit * 0.95) {
       return cached.sort((a, b) => (a.time as number) - (b.time as number))
     }
   }
 
-  const data = await fetchBitcoinCandlesticks(interval, limit, endTime, startTime)
-  candleCache.storeCandles(data).catch(() => {})
+  const data = await fetchBitcoinCandlesticks(interval, limit, endTime, startTime, symbol)
+  candleCache.storeCandles(symbol, interval, data).catch(() => {})
   return data
 }

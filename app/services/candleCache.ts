@@ -1,10 +1,11 @@
 import { CandlestickData, Time } from 'lightweight-charts'
 
 const DB_NAME = 'bitcoin-trader-cache'
-const DB_VERSION = 1
-const STORE_NAME = 'candles_BTCUSDT_5m'
+const DB_VERSION = 2
+const STORE_NAME = 'candles'
 
-type CandleRecord = CandlestickData<Time> & { volume?: number }
+type CandleRecord = CandlestickData<Time> & { volume?: number; symbol?: string; interval?: string }
+type StoredCandle = CandleRecord & { symbol: string; interval: string }
 
 class CandleCache {
   private db: IDBDatabase | null = null
@@ -22,8 +23,12 @@ class CandleCache {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result
+        // v1 → v2: eliminar store antiguo de clave simple, crear store con clave compuesta
+        if (db.objectStoreNames.contains('candles_BTCUSDT_5m')) {
+          db.deleteObjectStore('candles_BTCUSDT_5m')
+        }
         if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: 'time' })
+          db.createObjectStore(STORE_NAME, { keyPath: ['symbol', 'interval', 'time'] })
         }
       }
 
@@ -40,7 +45,7 @@ class CandleCache {
     return this.openPromise
   }
 
-  async getCandles(startTimeSec: number, endTimeSec: number): Promise<CandleRecord[]> {
+  async getCandles(symbol: string, interval: string, startTimeSec: number, endTimeSec: number): Promise<CandleRecord[]> {
     try {
       await this.open()
       if (!this.db) return []
@@ -48,7 +53,10 @@ class CandleCache {
       return new Promise<CandleRecord[]>((resolve, reject) => {
         const tx = this.db!.transaction(STORE_NAME, 'readonly')
         const store = tx.objectStore(STORE_NAME)
-        const range = IDBKeyRange.bound(startTimeSec, endTimeSec)
+        const range = IDBKeyRange.bound(
+          [symbol, interval, startTimeSec],
+          [symbol, interval, endTimeSec]
+        )
         const request = store.getAll(range)
 
         request.onsuccess = () => resolve((request.result as CandleRecord[]) || [])
@@ -59,7 +67,7 @@ class CandleCache {
     }
   }
 
-  async storeCandles(candles: CandleRecord[]): Promise<void> {
+  async storeCandles(symbol: string, interval: string, candles: CandleRecord[]): Promise<void> {
     if (candles.length === 0) return
     try {
       await this.open()
@@ -68,7 +76,10 @@ class CandleCache {
       return new Promise<void>((resolve, reject) => {
         const tx = this.db!.transaction(STORE_NAME, 'readwrite')
         const store = tx.objectStore(STORE_NAME)
-        candles.forEach((candle) => store.put(candle))
+        candles.forEach((candle) => {
+          const record: StoredCandle = { ...candle, symbol, interval }
+          store.put(record)
+        })
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })

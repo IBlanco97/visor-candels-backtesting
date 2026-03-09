@@ -29,6 +29,19 @@ interface VLine {
 
 const VLINE_COLORS = ['#f59e0b', '#22ab94', '#f7525f', '#a855f7', '#38bdf8', '#e2e8f0', '#6b7280']
 
+const SYMBOLS = [
+  'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
+  'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT',
+  'LTCUSDT', 'MATICUSDT',
+]
+
+const INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d']
+
+const INTERVAL_SECONDS: Record<string, number> = {
+  '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+  '1h': 3600, '4h': 14400, '1d': 86400,
+}
+
 interface TradePosition {
   id: string
   direction: TradeDirection
@@ -52,6 +65,12 @@ export default function CandlestickChart() {
   const seriesRef = useRef<any>(null)
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const initialLoadCompleteRef = useRef(false)
+  const [symbol, setSymbol] = useState('BTCUSDT')
+  const symbolRef = useRef('BTCUSDT')
+  const [timeframe, setTimeframe] = useState('5m')
+  const timeframeRef = useRef('5m')
+  const loadDataRef = useRef<(() => void) | null>(null)
+  const mountedRef = useRef(false)
   const [currentPrice, setCurrentPrice] = useState<number>(0)
   const [botTradePositions, setBotTradePositions] = useState<TradePosition[]>(() => {
     if (typeof window === 'undefined') return []
@@ -204,23 +223,26 @@ export default function CandlestickChart() {
         setLoading(true)
         initialLoadCompleteRef.current = false
 
+        const intervalSec = INTERVAL_SECONDS[timeframeRef.current] ?? 300
+        const posKey = `bitcoin-trader-chart-position-${symbolRef.current}-${timeframeRef.current}`
+
         // Check if there's a stored historical position (> 1 day ago) to load directly
         let storedPos: { from: number; to: number; centerTime: number } | null = null
         let initialEndTimeMs: number | undefined = undefined
         try {
-          const raw = localStorage.getItem('bitcoin-trader-chart-position')
+          const raw = localStorage.getItem(posKey)
           if (raw) {
             storedPos = JSON.parse(raw)
             const nowSec = Date.now() / 1000
             if (storedPos && storedPos.centerTime < nowSec - 86400) {
-              initialEndTimeMs = storedPos.centerTime * 1000 + 250 * 5 * 60 * 1000
+              initialEndTimeMs = storedPos.centerTime * 1000 + 250 * intervalSec * 1000
             }
           }
         } catch {}
 
         const data = initialEndTimeMs
-          ? await fetchCandlesWithCache('5m', 1000, initialEndTimeMs)
-          : await fetchBitcoinCandlesticks('5m', 1000)
+          ? await fetchCandlesWithCache(timeframeRef.current, 1000, initialEndTimeMs, undefined, symbolRef.current)
+          : await fetchBitcoinCandlesticks(timeframeRef.current, 1000, undefined, undefined, symbolRef.current)
 
         if (cancelled) return
         if (loadedCandlesRef.current.length > 0) return
@@ -271,7 +293,7 @@ export default function CandlestickChart() {
         setLoadingMore(true)
         const endTime = (oldestCandleTimeRef.current * 1000) - 1
         console.log('Fetching more data with endTime:', new Date(endTime))
-        const newData = await fetchCandlesWithCache('5m', 1000, endTime)
+        const newData = await fetchCandlesWithCache(timeframeRef.current, 1000, endTime, undefined, symbolRef.current)
         console.log('Received new data:', newData.length, 'candles')
 
         if (newData.length === 0) {
@@ -304,7 +326,7 @@ export default function CandlestickChart() {
         loadingMoreFutureRef.current = true
         setLoadingMoreFuture(true)
         const startTime = (newestCandleTimeRef.current * 1000) + 1
-        const newData = await fetchCandlesWithCache('5m', 1000, undefined, startTime)
+        const newData = await fetchCandlesWithCache(timeframeRef.current, 1000, undefined, startTime, symbolRef.current)
 
         // Filtrar candles que ya están cargados (el caché puede devolver el último candle ya presente)
         const newestLoaded = newestCandleTimeRef.current!
@@ -339,6 +361,7 @@ export default function CandlestickChart() {
       }
     }
 
+    loadDataRef.current = loadData
     loadData()
 
     const loadMoreHistoricalDataRef = { current: loadMoreHistoricalData }
@@ -462,7 +485,8 @@ export default function CandlestickChart() {
           if (timeRange) {
             const from = timeRange.from as number
             const to = timeRange.to as number
-            localStorage.setItem('bitcoin-trader-chart-position', JSON.stringify({
+            const posKey = `bitcoin-trader-chart-position-${symbolRef.current}-${timeframeRef.current}`
+            localStorage.setItem(posKey, JSON.stringify({
               from,
               to,
               centerTime: Math.floor((from + to) / 2),
@@ -854,7 +878,8 @@ export default function CandlestickChart() {
     if (!initialLoadDone) return
 
     try {
-      const stored = localStorage.getItem('bitcoin-trader-chart-position')
+      const posKey = `bitcoin-trader-chart-position-${symbol}-${timeframe}`
+      const stored = localStorage.getItem(posKey)
       if (!stored) return
 
       const { from, to, centerTime } = JSON.parse(stored)
@@ -1062,12 +1087,13 @@ export default function CandlestickChart() {
     setLoading(true)
     initialLoadCompleteRef.current = false
 
-    // endTime = target + 250 velas de 5min hacia adelante para que la fecha quede centrada
+    const intervalSec = INTERVAL_SECONDS[timeframeRef.current] ?? 300
+    // endTime = target + 250 velas hacia adelante para que la fecha quede centrada
     const targetMs = targetDate.getTime()
-    const endTimeMs = targetMs + 250 * 5 * 60 * 1000
+    const endTimeMs = targetMs + 250 * intervalSec * 1000
 
     try {
-      const data = await fetchCandlesWithCache('5m', 1000, endTimeMs)
+      const data = await fetchCandlesWithCache(timeframeRef.current, 1000, endTimeMs, undefined, symbolRef.current)
 
       if (data.length === 0) {
         setLoading(false)
@@ -1091,8 +1117,8 @@ export default function CandlestickChart() {
       // Centrar la vista: 50 velas antes y 150 velas después del target
       const targetUnix = Math.floor(targetMs / 1000)
       chartRef.current.timeScale().setVisibleRange({
-        from: (targetUnix - 50 * 5 * 60) as Time,
-        to: (targetUnix + 150 * 5 * 60) as Time,
+        from: (targetUnix - 50 * intervalSec) as Time,
+        to: (targetUnix + 150 * intervalSec) as Time,
       })
 
       setLoading(false)
@@ -1198,6 +1224,50 @@ export default function CandlestickChart() {
     backtestRulerDomRefs.current.clear()
   }
 
+  const reloadData = () => {
+    if (!seriesRef.current) return
+
+    // Capturar el rango visible actual para restaurarlo tras la recarga
+    const visibleRange = chartRef.current?.timeScale().getVisibleRange()
+    const savedFrom = visibleRange ? (visibleRange.from as number) : null
+    const savedTo = visibleRange ? (visibleRange.to as number) : null
+
+    seriesRef.current.setData([])
+    loadedCandlesRef.current = []
+    oldestCandleTimeRef.current = null
+    newestCandleTimeRef.current = null
+    hasMoreHistoricalDataRef.current = true
+    hasMoreFutureDataRef.current = false
+    loadingMoreRef.current = false
+    loadingMoreFutureRef.current = false
+    initialLoadCompleteRef.current = false
+    setLoadedCandles([])
+    setHasMoreHistoricalData(true)
+    setInitialLoadDone(false)
+    setLoading(true)
+
+    if (savedTo !== null) {
+      // Navegar al borde derecho actual y restaurar el rango visible exacto
+      navigateToDate(new Date(savedTo * 1000)).then(() => {
+        if (chartRef.current && savedFrom !== null) {
+          chartRef.current.timeScale().setVisibleRange({
+            from: savedFrom as Time,
+            to: savedTo as Time,
+          })
+        }
+      })
+    } else {
+      loadDataRef.current?.()
+    }
+  }
+
+  useEffect(() => {
+    symbolRef.current = symbol
+    timeframeRef.current = timeframe
+    if (!mountedRef.current) { mountedRef.current = true; return }
+    reloadData()
+  }, [symbol, timeframe]) // eslint-disable-line react-hooks/exhaustive-deps
+
     const pnlColor = profitLoss >= 0 ? 'text-green-500' : 'text-red-500'
   const pnlBgColor = profitLoss >= 0 ? 'bg-green-500' : 'bg-red-500'
 
@@ -1205,7 +1275,25 @@ export default function CandlestickChart() {
     <div className="flex flex-col h-screen bg-gray-900 text-white">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold">Bitcoin Trader - 5m</h1>
+          <h1 className="text-xl font-bold">Trader</h1>
+          <select
+            value={symbol}
+            onChange={e => setSymbol(e.target.value)}
+            className="bg-gray-700 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+          >
+            {SYMBOLS.map(s => (
+              <option key={s} value={s}>{s.replace('USDT', '/USDT')}</option>
+            ))}
+          </select>
+          <select
+            value={timeframe}
+            onChange={e => setTimeframe(e.target.value)}
+            className="bg-gray-700 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+          >
+            {INTERVALS.map(i => (
+              <option key={i} value={i}>{i}</option>
+            ))}
+          </select>
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -1348,7 +1436,7 @@ export default function CandlestickChart() {
         </div>
           <div className="flex items-center gap-4">
            <div className="text-sm">
-             <span className="text-gray-400">BTC Price:</span>
+             <span className="text-gray-400">{symbol.replace('USDT', '')}:</span>
              <span className="ml-2 font-mono">${currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
            </div>
            {tradeStage !== 'idle' && (
