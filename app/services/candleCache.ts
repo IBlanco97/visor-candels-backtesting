@@ -88,6 +88,50 @@ class CandleCache {
     }
   }
 
+  /** Returns the most recent candle time (seconds) for a symbol+interval, or null if none. O(log n). */
+  async getLatestCandleTime(symbol: string, interval: string): Promise<number | null> {
+    try {
+      await this.open()
+      if (!this.db) return null
+
+      return new Promise<number | null>((resolve, reject) => {
+        const tx = this.db!.transaction(STORE_NAME, 'readonly')
+        const store = tx.objectStore(STORE_NAME)
+        const range = IDBKeyRange.bound(
+          [symbol, interval, 0],
+          [symbol, interval, Number.MAX_SAFE_INTEGER]
+        )
+        const request = store.openCursor(range, 'prev')
+        request.onsuccess = () => resolve(request.result ? (request.result.value.time as number) : null)
+        request.onerror = () => reject(request.error)
+      })
+    } catch {
+      return null
+    }
+  }
+
+  /** Returns the oldest candle time (seconds) for a symbol+interval, or null if none. O(log n). */
+  async getEarliestCandleTime(symbol: string, interval: string): Promise<number | null> {
+    try {
+      await this.open()
+      if (!this.db) return null
+
+      return new Promise<number | null>((resolve, reject) => {
+        const tx = this.db!.transaction(STORE_NAME, 'readonly')
+        const store = tx.objectStore(STORE_NAME)
+        const range = IDBKeyRange.bound(
+          [symbol, interval, 0],
+          [symbol, interval, Number.MAX_SAFE_INTEGER]
+        )
+        const request = store.openCursor(range, 'next')
+        request.onsuccess = () => resolve(request.result ? (request.result.value.time as number) : null)
+        request.onerror = () => reject(request.error)
+      })
+    } catch {
+      return null
+    }
+  }
+
   async getCacheSize(): Promise<number> {
     try {
       await this.open()

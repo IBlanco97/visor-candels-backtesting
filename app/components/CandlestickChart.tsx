@@ -112,6 +112,7 @@ export default function CandlestickChart() {
   const [loadingMoreFuture, setLoadingMoreFuture] = useState(false)
   const savePositionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
+  const [offlineMsg, setOfflineMsg] = useState<string | null>(null)
   const [dateInput, setDateInput] = useState('')
   const [rulerMode, setRulerMode] = useState(false)
   const rulerModeRef = useRef(false)
@@ -1093,9 +1094,11 @@ export default function CandlestickChart() {
 
       if (data.length === 0) {
         setLoading(false)
+        setOfflineMsg('Sin datos en caché para esta fecha. Conecta internet o descarga los datos en la página /data.')
         return
       }
 
+      setOfflineMsg(null)
       seriesRef.current.setData(data)
       loadedCandlesRef.current = data
       setLoadedCandles(data)
@@ -1466,6 +1469,12 @@ export default function CandlestickChart() {
              </button>
            )}
            <Link
+             href="/data"
+             className="px-4 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors border border-gray-600"
+           >
+             📥 Offline
+           </Link>
+           <Link
              href="/trades"
              className="px-4 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors border border-gray-600 flex items-center gap-1"
            >
@@ -1663,6 +1672,18 @@ export default function CandlestickChart() {
           {loadingMoreFuture && !loading && (
             <div className="absolute top-4 right-4 bg-green-600 px-4 py-2 rounded-full text-sm">
               Cargando datos siguientes... →
+            </div>
+          )}
+          {offlineMsg && !loading && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-900 border border-yellow-600 rounded-lg px-6 py-4 text-center shadow-xl max-w-sm">
+              <div className="text-yellow-400 text-sm font-semibold mb-1">Sin datos en caché</div>
+              <div className="text-gray-300 text-sm mb-3">{offlineMsg}</div>
+              <button
+                onClick={() => setOfflineMsg(null)}
+                className="text-xs px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+              >
+                Cerrar
+              </button>
             </div>
           )}
         </div>

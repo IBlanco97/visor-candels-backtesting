@@ -63,6 +63,7 @@ export async function fetchBitcoinCandlesticks(
 
 // Wrapper con caché local (IndexedDB). Solo aplica cuando se especifica endTime o startTime,
 // ya que las peticiones sin límite temporal siempre deben traer datos frescos del presente.
+// Si la red falla (modo offline), devuelve lo que haya en caché.
 export async function fetchCandlesWithCache(
   interval: string = '5m',
   limit: number = 1000,
@@ -82,9 +83,25 @@ export async function fetchCandlesWithCache(
     if (cached.length >= limit * 0.95) {
       return cached.sort((a, b) => (a.time as number) - (b.time as number))
     }
+
+    try {
+      const data = await fetchBitcoinCandlesticks(interval, limit, endTime, startTime, symbol)
+      candleCache.storeCandles(symbol, interval, data).catch(() => {})
+      return data
+    } catch {
+      // Offline: devolver lo que haya en caché, aunque sea parcial
+      return cached.sort((a, b) => (a.time as number) - (b.time as number))
+    }
   }
 
-  const data = await fetchBitcoinCandlesticks(interval, limit, endTime, startTime, symbol)
-  candleCache.storeCandles(symbol, interval, data).catch(() => {})
-  return data
+  try {
+    const data = await fetchBitcoinCandlesticks(interval, limit, endTime, startTime, symbol)
+    candleCache.storeCandles(symbol, interval, data).catch(() => {})
+    return data
+  } catch {
+    // Offline: intentar servir datos recientes desde caché
+    const nowSec = Math.floor(Date.now() / 1000)
+    const cached = await candleCache.getCandles(symbol, interval, nowSec - limit * intervalSec, nowSec)
+    return cached.sort((a, b) => (a.time as number) - (b.time as number))
+  }
 }
