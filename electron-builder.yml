@@ -1,0 +1,41 @@
+appId: com.bitcointrader.app
+productName: Bitcoin Trader
+copyright: "Bitcoin Trader"
+
+# Use the locally installed Electron instead of downloading from GitHub
+electronDist: node_modules/electron/dist
+
+# Files to include in the packaged app
+files:
+  - electron/**/*
+  - .next/standalone/**/*
+  - package.json
+
+# Output directory
+directories:
+  output: dist
+  buildResources: build-resources
+
+# Windows installer (NSIS)
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # Uncomment and set icon path once you have build-resources/icon.ico:
+  # icon: build-resources/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  # installerIcon: build-resources/icon.ico
+  # uninstallerIcon: build-resources/icon.ico
+  # installerHeaderIcon: build-resources/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Bitcoin Trader
+
+# Node modules to include (electron-builder handles electron itself)
+asar: true
+asarUnpack:
+  - "**/*.node"

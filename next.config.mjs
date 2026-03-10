@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Genera un servidor Node.js autocontenido (necesario para Electron/desktop)
+  output: 'standalone',
+
   // Desactivar x-powered-by header por seguridad
   poweredByHeader: false,
 

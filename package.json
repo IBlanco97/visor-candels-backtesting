@@ -2,11 +2,15 @@
   "name": "bitcoin-trader",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "electron:prepare": "node scripts/prepare-electron.js",
+    "electron:dev": "electron electron/main.js",
+    "electron:build": "next build && node scripts/prepare-electron.js && electron-builder"
   },
   "dependencies": {
     "lightweight-charts": "^5.1.0",
@@ -19,6 +23,8 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "eslint": "^8",
     "eslint-config-next": "14.2.5",
     "postcss": "^8",
